@@ -9,7 +9,7 @@ An explorer application for Synology Photos using Python/Qt (PyQt6)
 
 - Uses a modified version of the [Synology API](https://github.com/N4S4/synology-api) project. This version, embedded here, is stripped down to the essentials : APIS only for Synology Photos.
 
-- Implements QAbstractItemModel and QStandardItem for TreeView / ListView
+- Implements QAbstractItemModel and QStandardItem for TreeView / ListView with QSortFilterProxyModel
 
 - Uses cache for thumbnails
 
@@ -21,6 +21,8 @@ An explorer application for Synology Photos using Python/Qt (PyQt6)
 
 ## Configuration
 
+- clone repository
+
 - install python dependencies
 
         pip install -r requirements.txt
@@ -28,7 +30,7 @@ An explorer application for Synology Photos using Python/Qt (PyQt6)
 
 - Default login to Photo API is done via a .env file in the root directory.
 
-  Prepare a ".env" file with the login parameters :
+  Prepare a ".env" file with the login parameters (avoid login dialog on start app) :
 
         SYNO_ADDR=...
         SYNO_PORT=...

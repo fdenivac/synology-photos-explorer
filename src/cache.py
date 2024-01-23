@@ -58,9 +58,7 @@ class ControlDownloadPool:
             except (InvalidStateError, CancelledError) as _e:
                 pass
             except Exception as _e:
-                log.info("clean_futures EXCEPTION")
-                print(_e)
-                log.info(_e)
+                log.info(f"clean_futures EXCEPTION: {_e}")
         self._lock.release()
 
     def loop_clean_futures(self, time_loop: float = 1.0):

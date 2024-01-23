@@ -26,6 +26,7 @@ from PyQt6.QtCore import (
     Qt,
     QAbstractItemModel,
     QModelIndex,
+    QSortFilterProxyModel,
     QSize,
     QRect,
     pyqtSignal,
@@ -111,10 +112,13 @@ class SynoNode(QStandardItem):
         data: Any = None,
         node_type: NodeType = NodeType.ROOT,
         parent: Any = None,
+        model: SynoModel = None,
     ):
         QStandardItem.__init__(self)
         self.space = space
         self.node_type = node_type
+        # INFO : workaround because QStandardItem.model() return always None
+        self._model = model
 
         if self.node_type in [NodeType.ROOT, NodeType.SPACE]:
             self._data = [data]
@@ -135,11 +139,26 @@ class SynoNode(QStandardItem):
                 DatePhoto(self._raw_data["time"]).to_string("%Y/%m/%d %H:%M:%S"),
                 smart_unit(self._raw_data["filesize"], "B"),
             ]
+            if "exif" in self._model.additional:
+                self._data.extend([
+                    self._raw_data["additional"]["exif"]["aperture"],
+                    self._raw_data["additional"]["exif"]["camera"],
+                    self._raw_data["additional"]["exif"]["exposure_time"],
+                    self._raw_data["additional"]["exif"]["focal_length"],
+                    self._raw_data["additional"]["exif"]["iso"],
+                    self._raw_data["additional"]["exif"]["lens"],
+                ])
+            if "resolution" in self._model.additional:
+                self._data.extend([
+                    # self._raw_data["additional"]["resolution"]["width"],
+                    # self._raw_data["additional"]["resolution"]["height"],
+                    f'{self._raw_data["additional"]["resolution"]["width"]} x {self._raw_data["additional"]["resolution"]["height"]}',
+
+                ])
             self.inode = self._raw_data["id"]
         else:
             assert False
 
-        self._columncount = len(self._data)
         self._children = []
         self._parent = parent
         if self._parent:
@@ -233,7 +252,6 @@ class SynoNode(QStandardItem):
             elements = synofoto.api.list_folders(
                 self.inode,
                 self.space == SpaceType.SHARED,
-                additional=["thumbnail"],
                 sort_by="filename",
             )
             log.info(
@@ -244,7 +262,7 @@ class SynoNode(QStandardItem):
                     synofoto.api.photos_in_folder(
                         self.inode,
                         self.space == SpaceType.SHARED,
-                        additional=["thumbnail"],
+                        additional=self._model.additional,
                         limit=self.nb_photos,
                         sort_by="takentime",
                     )
@@ -258,7 +276,7 @@ class SynoNode(QStandardItem):
                     log.info(f"photos_in_album({self.inode})")
                     elements = synofoto.api.photos_in_album(
                         self.inode,
-                        additional=["thumbnail"],
+                        additional=self._model.additional,
                         limit=self.nb_photos,
                         sort_by="takentime",
                     )
@@ -266,10 +284,10 @@ class SynoNode(QStandardItem):
         for row, element in enumerate(elements):
             if row < self.nb_folders:
                 album = element
-                node = SynoNode(self.space, album, NodeType.FOLDER, self)
+                node = SynoNode(self.space, album, NodeType.FOLDER, self, self._model)
             elif row < self.nb_folders + self.nb_photos:
                 photo = element
-                node = SynoNode(self.space, photo, NodeType.FILE, self)
+                node = SynoNode(self.space, photo, NodeType.FILE, self, self._model)
             else:
                 assert False
             if row >= len(self._children):
@@ -281,12 +299,6 @@ class SynoNode(QStandardItem):
         """Get data. Column is an offset in data"""
         if column >= 0 and column < len(self._data):
             return self._data[column]
-
-    def columnCount(self) -> int:
-        """return data column count"""
-        # log.info(f"columnCount: {self._columncount} for {self._data[0]}")
-        return 3  # TODO
-        return self._columncount
 
     def hasChildren(self, parent: QModelIndex = QModelIndex()) -> bool:
         # log.info("hasChildren")
@@ -329,7 +341,6 @@ class SynoNode(QStandardItem):
         child._row = len(self._children)
         child.dirs_only = self.dirs_only
         self._children.append(child)
-        self._columncount = max(child.columnCount(), self._columncount)
 
     def absoluteFilePath(self) -> str:
         """build full path"""
@@ -363,24 +374,34 @@ class SynoModel(QAbstractItemModel):
     Synology Photo Item Model
     """
 
-    def __init__(self, dirs_only=False, thumbnail=False):
+    def __init__(self, dirs_only: bool=False, additionnal: list[str]=[], thumbnail: bool=False) -> None :
         """Init Syno model"""
         QAbstractItemModel.__init__(self)
         self.dirs_only = dirs_only
         self.thumbnail = thumbnail
+        if thumbnail:
+            additionnal.append("thumbnail")
+        self.additional = list(set(additionnal))
         self._root = SynoNode(
             space=SpaceType.ROOT,
             node_type=NodeType.ROOT,
             data=space_names[SpaceType.ROOT],
+            model=self
         )
         self._root.dirs_only = dirs_only
 
         # default header names
         self.headerNames = ["Name", "Date", "Size"]
+        if "exif" in self.additional:
+            self.headerNames.extend(["Aperture", "Camera", "ExposureTime", "Focal", "ISO", "Lens"])
+        if "resolution" in self.additional:
+            self.headerNames.extend(["Resolution"])
+            # self.headerNames.extend(["Width", "Height"])
+
 
         for space in [SpaceType.PERSONAL, SpaceType.ALBUM, SpaceType.SHARED]:
             node = SynoNode(
-                space=space, node_type=NodeType.SPACE, data=space_names[space]
+                space=space, node_type=NodeType.SPACE, data=space_names[space], model=self
             )
             self._root.addChild(node)
             self._root.nb_folders += 1
@@ -389,7 +410,6 @@ class SynoModel(QAbstractItemModel):
             NodeType.SPACE: QtWidgets.QApplication.instance()
             .style()
             .standardIcon(QStyle.StandardPixmap.SP_DirHomeIcon),
-            # NodeType.FOLDER:  QtWidgets.QApplication.instance().style().standardIcon(getattr(QStyle.StandardPixmap, "SP_DirIcon")),
             NodeType.FOLDER: QtGui.QIcon("./src/ico/application-sidebar.png"),
             NodeType.FILE: QtWidgets.QApplication.instance()
             .style()
@@ -411,7 +431,7 @@ class SynoModel(QAbstractItemModel):
             parent = _parent.internalPointer()
         parent.addChild(node)
 
-    def pathIndex(self, path):
+    def pathIndex(self, path: str) -> QModelIndex:
         """return index from path"""
         path = PurePosixPath(path)
         node = self._root
@@ -422,7 +442,7 @@ class SynoModel(QAbstractItemModel):
                 break
         return QAbstractItemModel.createIndex(self, node._row, 0, node)
 
-    def index(self, row, column, _parent=QModelIndex()):
+    def index(self, row: int, column: int, _parent=QModelIndex()) -> QModelIndex:
         """override QAbstractItemModel.index"""
         parent = self._root if not _parent.isValid() else _parent.internalPointer()
 
@@ -434,7 +454,7 @@ class SynoModel(QAbstractItemModel):
             return QAbstractItemModel.createIndex(self, row, column, child)
         return QtCore.QModelIndex()
 
-    def parent(self, index):
+    def parent(self, index: QModelIndex) -> QModelIndex:
         """override QAbstractItemModel.parent"""
         if index.isValid():
             p = index.internalPointer().parent()
@@ -442,23 +462,20 @@ class SynoModel(QAbstractItemModel):
                 return QAbstractItemModel.createIndex(self, p.row(), 0, p)
         return QtCore.QModelIndex()
 
-    def columnCount(self, index):
+    def columnCount(self, index: QModelIndex) -> QModelIndex:
         """override QAbstractItemModel.columnCount"""
-        if index.isValid():
-            return index.internalPointer().columnCount()
-        return self._root.columnCount()
+        return len(self.headerNames)
 
-    def flags(self, index):
+    def flags(self, index: QModelIndex) -> Any:
         """overrride QAbstractItemModel.flags"""
         node = index.internalPointer()
         if node.node_type in [NodeType.ROOT, NodeType.SPACE]:
             return super().flags(index)
         # accept drag
         defaultFlags = super().flags(index)
-        flags = Qt.ItemFlag.ItemIsDragEnabled | defaultFlags
         return Qt.ItemFlag.ItemIsDragEnabled | defaultFlags
 
-    def data(self, index, role):
+    def data(self, index: QModelIndex, role) -> Any:
         """override QAbstractItemModel.data"""
         if not index.isValid():
             return None
@@ -546,7 +563,7 @@ class SynoModel(QAbstractItemModel):
 
         return QVariant()
 
-    def headerData(self, column, orientation, role):
+    def headerData(self, column: int, orientation: QtCore.Qt.Orientation, role: QtCore.Qt.ItemDataRole) -> Any:
         """override QAbstractItemModel.headerData"""
         if role == QtCore.Qt.ItemDataRole.DisplayRole:
             if orientation == QtCore.Qt.Orientation.Horizontal:
@@ -616,10 +633,83 @@ class SynoModel(QAbstractItemModel):
             return
         index.internalPointer().updateIfUnknownRowCount()
 
-    def useThumbnail(self, thumbnail: bool = False):
+    def useThumbnail(self, thumbnail: bool = False) -> None:
         """use thumbnail as icon"""
         self.thumbnail = thumbnail
 
     def setThumbnailSize(self, size: QSize) -> None:
         """update node child count if unknown"""
         self.thumbnail_size = size
+
+    def nodePointer(self, index: QModelIndex) -> SynoNode:
+        """ get node pointer """
+        return index.internalPointer()
+
+    def nodeIndex(self, index: QModelIndex) -> QModelIndex:
+        """ get node index """
+        return index
+
+
+class SynoSortFilterProxyModel(QSortFilterProxyModel):
+
+    def __init__(self, parent=None):
+        super(SynoSortFilterProxyModel, self).__init__(parent=parent)
+
+    def setRootPath(self, rootPath: str) -> QModelIndex:
+        """change root path, return index"""
+        return self.mapFromSource(self.sourceModel().setRootPath(rootPath))
+
+    def pathIndex(self, path: str) -> QModelIndex:
+        """return index from path"""
+        return self.mapFromSource(self.sourceModel().pathIndex(path))
+
+    def nodePointer(self, index: QModelIndex) -> SynoNode:
+        """ get SynoNode from index """
+        if isinstance(index.model(), SynoSortFilterProxyModel):
+            return index.model().mapToSource(index).internalPointer()
+        return index.internalPointer()
+
+    def nodeIndex(self, index: QModelIndex) -> QModelIndex:
+        """ get SynoNode index from index """
+        if isinstance(index.model(), SynoSortFilterProxyModel):
+            return index.model().mapToSource(index)
+        return index
+
+    def lessThan(self, left: QModelIndex,  right:QModelIndex) -> bool:
+        """override oSortFilterProxyModel.lessThan """
+        column = left.column()
+        # TODO : for future : change column index to headername 
+        if column in [2, 3, 5, 6, 7, 9]:
+            leftNode: SynoNode = left.model().nodePointer(left)
+            if leftNode.node_type != NodeType.FILE:
+                return False
+            leftData = leftNode.dataColumn(column)
+            if not leftData:
+                return False
+            rightNode: SynoNode = right.model().nodePointer(right)
+            rightData = rightNode.dataColumn(column)
+            if not rightData:
+                return True
+            if column == 2:  # Size
+                return leftNode.rawData()["filesize"] < rightNode.rawData()["filesize"]
+            if column == 3:  # Aperture
+                return float(leftData[1:]) < float(rightData[1:])
+            if column == 5:  # Exposure
+                try:
+                    val = leftData[:-2].split("/")
+                    lv = float(val[0]) if len(val) == 1 else int(val[0]) / int(val[1])
+                    val = rightData[:-2].split("/")
+                    rv = float(val[0]) if len(val) == 1 else int(val[0]) / int(val[1])
+                    return lv < rv
+                except ValueError:
+                    return False
+            if column == 6:  # Focal
+                return float(leftData[:-3]) < float(rightData[:-3])
+            if column == 7:  # ISO
+                return float(leftData) < float(rightData)
+            if column == 9:  # ISO
+                lw, lh = leftData.split(" x ")
+                rw, rh = rightData.split(" x ")
+                return int(lw) * int(lh) < int(rw) * int(rh)
+
+        return super().lessThan(left, right)

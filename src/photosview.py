@@ -21,6 +21,8 @@ from PyQt6.QtCore import (
     QItemSelectionModel,
 )
 
+from synophotosmodel import SynoSortFilterProxyModel
+from internalconfig import USE_SORT_MODEL
 
 class PhotosIconView(QListView):
     """
@@ -67,7 +69,14 @@ class PhotosDetailsView(QTableView):
         super(PhotosDetailsView, self).__init__()
 
         model.useThumbnail(False)
-        self.setModel(model)
+
+        if USE_SORT_MODEL:
+            self.proxyModel = SynoSortFilterProxyModel()
+            self.proxyModel.setSourceModel(model)
+            self.setModel(self.proxyModel)
+        else:
+            self.setModel(model)
+        
         self.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
 
@@ -83,3 +92,4 @@ class PhotosDetailsView(QTableView):
         self.setFrameStyle(QFrame.Shape.NoFrame)
         self.setSortingEnabled(True)
         self.setEditTriggers(QAbstractItemView.EditTrigger.EditKeyPressed)
+

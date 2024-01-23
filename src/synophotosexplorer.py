@@ -11,6 +11,7 @@ import os
 import ctypes
 import weakref
 import winreg
+from pathlib import PurePosixPath
 from threading import Event
 
 from PyQt6.QtWidgets import (
@@ -76,7 +77,7 @@ from uidialogs import LoginDialog, AboutDialog, FailedConnectDialog
 log = logging.getLogger()
 log.setLevel(logging.INFO)
 handler = logging.StreamHandler(sys.stdout)
-handler.setLevel(logging.WARNING)
+handler.setLevel(logging.INFO)
 handler.setFormatter(
     logging.Formatter(
         "%(name)s - %(asctime)s.%(msecs)d - %(levelname)s - %(message)s",
@@ -133,8 +134,8 @@ def fatalConnect(quit=False):
 
 
 class App(QMainWindow):
-    def __init__(self):
-        super().__init__()
+    def __init__(self, parent=None):
+        super(App, self).__init__(parent=parent)
 
         # Navigation history
         self.history = History(100)
@@ -227,7 +228,7 @@ class App(QMainWindow):
         self.sideExplorer.customContextMenuRequested.connect(self.sideContextItemMenu)
 
         # model for explorer
-        self.mainModel = SynoModel(dirs_only=False)
+        self.mainModel = SynoModel(dirs_only=False, additionnal=["thumbnail", "exif", "resolution"])
 
         # Top menus
         self.createTopMenu()
@@ -294,12 +295,10 @@ class App(QMainWindow):
 
         # initial path
         self.currentDir = self.settings.value("initialpath", INITIAL_PATH)
-        self.mainModel.setRootPath(self.currentDir)
         self.sideExplorer.model().setRootPath(self.currentDir)
         self.sideExplorer.expandAbsolutePath(self.currentDir)
-        self.navigate(self.mainModel.setRootPath(self.currentDir))
+        self.navigate(self.mainExplorer.model().setRootPath(self.currentDir))
         self.show()
-
         log.info("END InitUI")
 
     def createTopMenu(self):
@@ -459,7 +458,7 @@ class App(QMainWindow):
         self.mainExplorer.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.mainExplorer.customContextMenuRequested.connect(self.contextItemMenu)
 
-        selectionModel = QItemSelectionModel(self.mainModel)
+        selectionModel = QItemSelectionModel(self.mainExplorer.model())
         self.mainExplorer.setSelectionModel(selectionModel)
         self.mainExplorer.selectionModel().currentRowChanged.connect(
             self.onCurrentRowChanged
@@ -469,7 +468,7 @@ class App(QMainWindow):
         )
         if hasattr(self, "explorerSplitter"):
             self.explorerSplitter.replaceWidget(1, self.mainExplorer)
-            self.mainExplorer.setRootIndex(self.mainModel.setRootPath(self.currentDir))
+            self.mainExplorer.setRootIndex(self.mainExplorer.model().setRootPath(self.currentDir))
 
     def closeEvent(self, event):
         """close app"""
@@ -589,12 +588,15 @@ class App(QMainWindow):
         self.mainExplorer.selectionModel().clearSelection()
 
     def navigate(self, index):
-        node = index.internalPointer()
+        """ navigate - index must be SynoSortFilterProxyModel"""
+        nodeIndex = index.model().nodeIndex(index)
+        node = nodeIndex.internalPointer()
         log.info(f"navigate inode {node.inode} {node.dataColumn(0)}")
-        self.currentDir = self.mainModel.absoluteFilePath(index)
-        index = self.mainModel.setRootPath(self.currentDir)
+        self.currentDir = self.mainModel.absoluteFilePath(nodeIndex)
+        self.mainModel.setRootPath(self.currentDir)
         # need to have real count
-        self.mainModel.updateIfUnknownRowCount(index)
+        self.mainModel.updateIfUnknownRowCount(nodeIndex)
+
         self.mainExplorer.setRootIndex(index)
         # scroll to first item
         child = node.child(0)
@@ -613,9 +615,6 @@ class App(QMainWindow):
         self.download_childs_thumbnail(node)
         self.history.append(self.currentDir)
 
-        self.history.append(self.currentDir)
-
-        self.history.append(self.currentDir)
 
     def navigateUp(self, event):
         self.currentDir = os.path.dirname(self.currentDir)
@@ -636,20 +635,21 @@ class App(QMainWindow):
             self.sideExplorer.setCurrentIndex(index)
 
     def navigateAddress(self):
-        """Enter in address bar -> navigate"""
+        """Enter in address bar -> navigate
+            Warning : case sensitive
+        """
         path = self.addressBar.text()
         index = self.sideExplorer.model().pathIndex(path)
         newPath = self.sideExplorer.model().absoluteFilePath(index)
-        if path != newPath:
+        if PurePosixPath(path) != PurePosixPath(newPath):
             log.info("Invalid address")
             self.addressBar.selectAll()
             self.statusBar().showMessage("Error: Invalid address")
             return
-
         self.navigate(self.sideExplorer.model().pathIndex(path))
 
     def updateStatus(self, element=None):
-        """update status bar from path or QIndex"""
+        """update status bar from path or QModelIndex"""
         log.info("updateStatus")
         if element is None:
             index = self.mainExplorer.selectionModel().currentIndex()
@@ -659,6 +659,7 @@ class App(QMainWindow):
                 if isinstance(element, QModelIndex)
                 else self.mainModel.pathIndex(element)
             )
+        index = index.model().nodeIndex(index)
         self.mainModel.updateIfUnknownRowCount(index)
         status = ""
         node: SynoNode = index.internalPointer()
@@ -684,15 +685,11 @@ class App(QMainWindow):
         self.statusBar().showMessage(status)
 
     def onDoubleClick(self, index):
-        """DoubleClick in mainExplorer"""
-        node = index.internalPointer()
+        """DoubleClick in mainExplorer for open folder"""
+        node = index.model().nodePointer(index)
         if node.isDir():
             self.navigate(index)
             self.download_childs_thumbnail(node)
-
-    def onClick(self, index):
-        """Click in mainExplorer"""
-        pass
 
     def onCurrentRowChangedInSideExpl(self, index: QModelIndex):
         """selection changed (a folder) in side explorer"""
@@ -704,9 +701,9 @@ class App(QMainWindow):
     def onSelectionChanged(self, selected: QItemSelection, unselected: QItemSelection):
         self.updateStatus()
 
-    def onCurrentRowChanged(self, index):
+    def onCurrentRowChanged(self, index: QModelIndex):
         """selection changed in main explorer"""
-        node: SynoNode = index.internalPointer()
+        node: SynoNode = index.model().nodePointer(index)
         data = node.rawData()
         # set json data
         self.json_view.setModel(JsonModel(data=formatJson(data)))
@@ -783,7 +780,6 @@ class App(QMainWindow):
         self.downloadSelected(self.sideSelectedToMainIndexes(), folder)
 
 
-
     def downloadSelected(self, indexes, path):
         """download photos in folder"""
 
@@ -805,7 +801,7 @@ class App(QMainWindow):
         for index in indexes:
             if index.column() > 0:
                 continue
-            node: SynoNode = index.internalPointer()
+            node: SynoNode = index.model().nodePointer(index)
             if node.node_type == NodeType.FILE:
                 log.info(f"Download photo inode {node.inode} {node.dataColumn(0)}")
                 photo_download(node, path)
@@ -962,7 +958,6 @@ if __name__ == "__main__":
         download_thread_pool.shutdown(wait=True, cancel_futures=True)
         sys.exit()
     
-
     app = QApplication(sys.argv)
     myApp = App()
     sys.exit(app.exec())
