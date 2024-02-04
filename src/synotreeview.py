@@ -1,3 +1,4 @@
+#!python
 """
 SynoTreeView
 
@@ -7,6 +8,8 @@ SynoTreeView
 import logging
 
 from PyQt6.QtWidgets import QTreeView
+from PyQt6.QtCore import QModelIndex
+
 
 log = logging.getLogger(__name__)
 
@@ -25,17 +28,14 @@ class SynoTreeView(QTreeView):
         if index.isValid():
             node = index.internalPointer()
             if node.isUnknownRowCount():
-                node.updateRowCount()
-                log.info(f"collapse/expand({node.childCount()}) for {node._data[0]}")
-                if node.childCount() == 0:
-                    # workaround for removing expand/collapse indicator
-                    self.collapse(index.parent())
-                    self.expand(index.parent())
+                index.model().updateRowCount(index)
         return super().mousePressEvent(event)
 
-    def expandAbsolutePath(self, path):
+    def expandAbsolutePath(self, path: str) -> QModelIndex:
         """expand absolute path"""
         indexes = self.model().pathIndexes(path)
+        index = None
         for index in indexes:
-            index.internalPointer().updateRowCount()
+            index.model().updateRowCount(index)
             self.expand(index)
+        return index

@@ -33,7 +33,6 @@ from PyQt6.QtCore import (
     QObject,
     QVariant,
     QMimeData,
-    QUrl,
 )
 from PyQt6.QtGui import QStandardItem, QFont, QPixmap, QImage, QColorSpace, QColorConstants
 
@@ -44,7 +43,7 @@ from dotenv import load_dotenv
 #   from synology_api.exceptions import PhotosError
 from synology_photos_api.photos import DatePhoto
 
-from internalconfig import CACHE_PIXMAP
+from internalconfig import CACHE_PIXMAP, PHOTOS_CHUNK
 from photos_api import synofoto
 from utils import smart_unit
 
@@ -56,6 +55,7 @@ load_dotenv()
 
 # set logger in stdout
 log = logging.getLogger(__name__)
+log.setLevel(logging.INFO)
 
 
 # signals emitted from here
@@ -73,13 +73,15 @@ class SpaceType(Enum):
     PERSONAL = 2
     SHARED = 3
     ALBUM = 4
+    SEARCH = 5
 
 
 class NodeType(Enum):
     ROOT = 0
     FOLDER = 1
     FILE = 2
-    SPACE = 4
+    SPACE = 3
+    SEARCH = 4
 
 
 ROOT_NAME = "/"
@@ -91,6 +93,7 @@ space_names = {
     SpaceType.PERSONAL: "Personal",
     SpaceType.SHARED: "Shared",
     SpaceType.ALBUM: "Album",
+    SpaceType.SEARCH: "Search",
 }
 
 nodetype_names = {
@@ -98,6 +101,7 @@ nodetype_names = {
     NodeType.FOLDER: "Folder",
     NodeType.FILE: "Photo",
     NodeType.SPACE: "Space",
+    NodeType.SEARCH: "Search",
 }
 
 
@@ -117,19 +121,23 @@ class SynoNode(QStandardItem):
         QStandardItem.__init__(self)
         self.space = space
         self.node_type = node_type
+        self._raw_data = {}
         # INFO : workaround because QStandardItem.model() return always None
         self._model = model
 
         if self.node_type in [NodeType.ROOT, NodeType.SPACE]:
             self._data = [data]
             self.inode = None if self.node_type == NodeType.ROOT else 0
-            self._raw_data = {}
+            self.nb_folders = 0
+            if self.space not in [SpaceType.ROOT, SpaceType.SEARCH]:
+                self.nb_folders = UNKNOWN_COUNT
 
         elif self.node_type == NodeType.FOLDER:
             self._raw_data = data
             folder_name = PurePosixPath(self._raw_data["name"]).parts[-1]
             self._data = [folder_name]
             self.inode = self._raw_data["id"]
+            self.nb_folders = UNKNOWN_COUNT  # means unknown at this moment
 
         elif self.node_type == NodeType.FILE:
             # photo json
@@ -150,12 +158,17 @@ class SynoNode(QStandardItem):
                 ])
             if "resolution" in self._model.additional:
                 self._data.extend([
-                    # self._raw_data["additional"]["resolution"]["width"],
-                    # self._raw_data["additional"]["resolution"]["height"],
                     f'{self._raw_data["additional"]["resolution"]["width"]} x {self._raw_data["additional"]["resolution"]["height"]}',
 
                 ])
             self.inode = self._raw_data["id"]
+            self.nb_folders = 0
+
+        elif self.node_type == NodeType.SEARCH:
+            # specific for search space
+            self._data = [data]
+            self.inode = None
+            self.nb_folders = UNKNOWN_COUNT
         else:
             assert False
 
@@ -165,22 +178,20 @@ class SynoNode(QStandardItem):
             self.dirs_only = self._parent.dirs_only
         else:
             self.dirs_only = False
-        self._row = 0
-        self.nb_folders = UNKNOWN_COUNT  # means unknown at this moment
         self.nb_photos = 0
-
-        if self.node_type in [NodeType.ROOT, NodeType.FILE]:
-            self.nb_folders = 0
 
     def __hash__(self):
         return self.inode
 
     def __eq__(self, other):
-        return self.inode == other.inode
+        """ equality test"""
+        return (self.inode == other.inode
+                 and self._data == other._data
+                 and self.space == other.space)
 
     def isDir(self) -> bool:
         """return True if node is folder"""
-        return self.node_type in [NodeType.SPACE, NodeType.FOLDER]
+        return self.node_type in [NodeType.SPACE, NodeType.FOLDER, NodeType.SEARCH]
 
     def isFile(self) -> bool:
         """return True if node is file"""
@@ -219,6 +230,20 @@ class SynoNode(QStandardItem):
                     self.nb_photos = synofoto.api.count_photos_in_album(self.inode)
                     self._children = [None] * (self.nb_photos)
 
+        elif self.space == SpaceType.SEARCH:
+            section, search, team = self.searchContext
+            if not self.dirs_only:
+                if section == "tag":
+                    log.warning(f"count_photos_with_tag({search}, {team})")
+                    self.nb_photos = synofoto.api.count_photos_with_tag(search, team=team)
+                elif section == "keyword":
+                    log.warning(f"count_photos_with_keyword({search}, {team})")
+                    self.nb_photos = synofoto.api.count_photos_with_keyword(search,team=team)
+                else:
+                    assert False
+                self._children = [None] * self.nb_photos
+            self.nb_folders = 0
+
         else:
             team = self.space == SpaceType.SHARED
             if self.node_type == NodeType.SPACE:
@@ -245,7 +270,7 @@ class SynoNode(QStandardItem):
         return True
 
     def _createChildNodes(self) -> None:
-        """create child node"""
+        """create children nodes for NodeType.FILE"""
         self.updateRowCount()
         if self.space in [SpaceType.PERSONAL, SpaceType.SHARED]:
             log.info(f"list_folders({self.inode}, {self.space == SpaceType.SHARED})")
@@ -258,28 +283,83 @@ class SynoNode(QStandardItem):
                 f"photos_in_folder({self.inode}, {self.space == SpaceType.SHARED})"
             )
             if not self.dirs_only:
-                elements.extend(
-                    synofoto.api.photos_in_folder(
-                        self.inode,
-                        self.space == SpaceType.SHARED,
+                left = self.nb_photos
+                while left:
+                    partial_elements = synofoto.api.photos_in_folder(
+                            self.inode,
+                            self.space == SpaceType.SHARED,
+                            offset=self.nb_photos - left,
+                            limit=min(PHOTOS_CHUNK, left),
+                            additional=self._model.additional,
+                            sort_by="takentime",
+                        )
+                    left -= len(partial_elements)
+                    if left:
+                        log.warning(f"{left} photos left")
+                    elements.extend(partial_elements)
+
+        elif self.space == SpaceType.SEARCH:
+            section, search, team = self.searchContext
+            if self.dirs_only:
+                return
+            if section == "tag":
+                log.warning(f"photos_with_tag({search}, {team})")
+                left = self.nb_photos
+                elements = []
+                while left:
+                    partial_elements = synofoto.api.photos_with_tag(
+                        search,
+                        team=team,
+                        offset=self.nb_photos - left,
+                        limit=min(PHOTOS_CHUNK, left),
                         additional=self._model.additional,
-                        limit=self.nb_photos,
-                        sort_by="takentime",
-                    )
-                )
-        else:
+                        sort_by="takentime"
+                        )
+                    left -= len(partial_elements)
+                    if left:
+                        log.warning(f"{left} photos left")
+                    elements.extend(partial_elements)
+            elif section == "keyword":
+                log.warning(f"photos_with_keyword({search}, {team})")
+                left = self.nb_photos
+                elements = []
+                while left:
+                    partial_elements = synofoto.api.photos_with_keyword(
+                        search,
+                        team=team,
+                        offset=self.nb_photos - left,
+                        limit=min(PHOTOS_CHUNK, left),
+                        additional=self._model.additional,
+                        sort_by="takentime"
+                        )
+                    left -= len(partial_elements)
+                    if left:
+                        log.warning(f"{left} photos left")
+                    elements.extend(partial_elements)
+
+        elif self.space == SpaceType.ALBUM:
             if self.node_type == NodeType.SPACE:
-                log.info(f"list_albums()")
+                log.info("list_albums()")
                 elements = synofoto.api.list_albums(sort_by="album_name")
             else:
                 if not self.dirs_only:
                     log.info(f"photos_in_album({self.inode})")
-                    elements = synofoto.api.photos_in_album(
-                        self.inode,
-                        additional=self._model.additional,
-                        limit=self.nb_photos,
-                        sort_by="takentime",
-                    )
+                    elements = []
+                    left = self.nb_photos
+                    while left:
+                        partial_elements = synofoto.api.photos_in_album(
+                            self.inode,
+                            offset=self.nb_photos - left,
+                            limit=min(PHOTOS_CHUNK, left),
+                            additional=self._model.additional,
+                            sort_by="takentime",
+                        )
+                        left -= len(partial_elements)
+                        if left:
+                            log.warning(f"{left} photos left")
+                        elements.extend(partial_elements)
+        else:
+            assert False
 
         for row, element in enumerate(elements):
             if row < self.nb_folders:
@@ -293,7 +373,25 @@ class SynoNode(QStandardItem):
             if row >= len(self._children):
                 assert False
             self._children[row] = node
-            node._row = row
+
+    def findChild(self, name: str) -> SynoNode:
+        """ return child node 'name' in column 0 """
+        for node in self._children:
+            if node._data[0] == name:
+                return node
+
+    def removeChild(self, nodeToRemove: SynoNode) -> bool:
+        """ remove specific child """
+        for node in self._children:
+            if node == nodeToRemove:
+                if nodeToRemove.node_type == NodeType.FILE:
+                    self.nb_photos -= 1
+                else:
+                    self.nb_folders -= 1
+                self._children.remove(nodeToRemove)
+                del nodeToRemove
+                return True
+        return False
 
     def dataColumn(self, column: int = 0) -> Any:
         """Get data. Column is an offset in data"""
@@ -301,7 +399,8 @@ class SynoNode(QStandardItem):
             return self._data[column]
 
     def hasChildren(self, parent: QModelIndex = QModelIndex()) -> bool:
-        # log.info("hasChildren")
+        """returns true if parent has any children; otherwise returns false."""
+        # log.info(f"{self._data[0]} hasChildren")
         return self.childCount() > 0
 
     def childCount(self) -> int:
@@ -333,12 +432,14 @@ class SynoNode(QStandardItem):
 
     def row(self) -> int:
         """return node row"""
-        return self._row
+        if self._parent is None:
+            return 0
+        # (Warning list.index use __eq__)
+        return self._parent._children.index(self)
 
     def addChild(self, child: SynoNode) -> None:
         """add child to node"""
         child._parent = self
-        child._row = len(self._children)
         child.dirs_only = self.dirs_only
         self._children.append(child)
 
@@ -359,6 +460,19 @@ class SynoNode(QStandardItem):
         """get raw data : the json"""
         return self._raw_data
 
+    def isShared(self) -> bool:
+        """ return True if node is in Shared Space"""
+        if self.space == SpaceType.ALBUM:
+            # album can have photos in personal or shared space, no way to know
+            shared = None
+        elif self.space == SpaceType.SEARCH:
+            # TODO shared var in node model ?
+            shared = self.parent().parent().dataColumn(0) == "Shared"
+        else:
+            shared = self.space == SpaceType.SHARED
+        return shared
+
+
     def photosNumber(self) -> int:
         return self.nb_photos
 
@@ -371,23 +485,26 @@ class SynoNode(QStandardItem):
 
 class SynoModel(QAbstractItemModel):
     """
-    Synology Photo Item Model
+    Synology Photos Item Model
     """
 
-    def __init__(self, dirs_only: bool=False, additionnal: list[str]=[], thumbnail: bool=False) -> None :
+    def __init__(self, dirs_only: bool=False, additional: list[str]=None, thumbnail: bool=False, search=False) -> None :
         """Init Syno model"""
         QAbstractItemModel.__init__(self)
         self.dirs_only = dirs_only
         self.thumbnail = thumbnail
         if thumbnail:
-            additionnal.append("thumbnail")
-        self.additional = list(set(additionnal))
+            additional.append("thumbnail")
+        if additional is None:
+            additional = []
+        self.additional = list(set(additional))
         self._root = SynoNode(
             space=SpaceType.ROOT,
             node_type=NodeType.ROOT,
             data=space_names[SpaceType.ROOT],
             model=self
         )
+        self.search_mode = search
         self._root.dirs_only = dirs_only
 
         # default header names
@@ -396,15 +513,6 @@ class SynoModel(QAbstractItemModel):
             self.headerNames.extend(["Aperture", "Camera", "ExposureTime", "Focal", "ISO", "Lens"])
         if "resolution" in self.additional:
             self.headerNames.extend(["Resolution"])
-            # self.headerNames.extend(["Width", "Height"])
-
-
-        for space in [SpaceType.PERSONAL, SpaceType.ALBUM, SpaceType.SHARED]:
-            node = SynoNode(
-                space=space, node_type=NodeType.SPACE, data=space_names[space], model=self
-            )
-            self._root.addChild(node)
-            self._root.nb_folders += 1
 
         self.icons = {
             NodeType.SPACE: QtWidgets.QApplication.instance()
@@ -414,8 +522,19 @@ class SynoModel(QAbstractItemModel):
             NodeType.FILE: QtWidgets.QApplication.instance()
             .style()
             .standardIcon(QStyle.StandardPixmap.SP_FileIcon),
+            NodeType.SEARCH: QtGui.QIcon("./src/ico/application-sidebar.png"),
         }
         self.thumbnail_size = QSize(200, 150)
+
+        spaces = [SpaceType.PERSONAL, SpaceType.ALBUM, SpaceType.SHARED]
+        if self.search_mode:
+            spaces.append(SpaceType.SEARCH)
+        for space in spaces:
+            node = SynoNode(
+                space=space, node_type=NodeType.SPACE, data=space_names[space], model=self
+            )
+            self._root.addChild(node)
+            self._root.nb_folders += 1
 
     def rowCount(self, index: QModelIndex) -> int:
         """override QAbstractItemModel.rowCount"""
@@ -431,27 +550,33 @@ class SynoModel(QAbstractItemModel):
             parent = _parent.internalPointer()
         parent.addChild(node)
 
+    def pathToNode(self, path: str) -> SynoNode|None:
+        """ return node from path """
+        node = self._root
+        path = PurePosixPath(path)
+        for part in path.parts[1:]:
+            node = self._find_in_childs(node, part)
+            if node is None:
+                log.warning(f"pathToNode({path}) : part not found")
+                return None
+        return node
+
     def pathIndex(self, path: str) -> QModelIndex:
         """return index from path"""
         path = PurePosixPath(path)
-        node = self._root
-        for part in path.parts[1:]:
-            node = SynoModel._find_in_childs(node, part)
-            if node is None:
-                node = self._root
-                break
-        return QAbstractItemModel.createIndex(self, node._row, 0, node)
+        node = self.pathToNode(path)
+        if node is None:
+            node = self._root
+        return self.createIndex(node.row(), 0, node)
 
     def index(self, row: int, column: int, _parent=QModelIndex()) -> QModelIndex:
         """override QAbstractItemModel.index"""
         parent = self._root if not _parent.isValid() else _parent.internalPointer()
-
         if not QAbstractItemModel.hasIndex(self, row, column, _parent):
             return QtCore.QModelIndex()
-
         child = parent.child(row)
         if child:
-            return QAbstractItemModel.createIndex(self, row, column, child)
+            return self.createIndex(row, column, child)
         return QtCore.QModelIndex()
 
     def parent(self, index: QModelIndex) -> QModelIndex:
@@ -459,15 +584,17 @@ class SynoModel(QAbstractItemModel):
         if index.isValid():
             p = index.internalPointer().parent()
             if p:
-                return QAbstractItemModel.createIndex(self, p.row(), 0, p)
+                return self.createIndex(p.row(), 0, p)
         return QtCore.QModelIndex()
 
-    def columnCount(self, index: QModelIndex) -> QModelIndex:
+    def columnCount(self, index: QModelIndex) -> int:
         """override QAbstractItemModel.columnCount"""
         return len(self.headerNames)
 
     def flags(self, index: QModelIndex) -> Any:
         """overrride QAbstractItemModel.flags"""
+        if not index.isValid():
+            return super().flags(index)
         node = index.internalPointer()
         if node.node_type in [NodeType.ROOT, NodeType.SPACE]:
             return super().flags(index)
@@ -489,6 +616,7 @@ class SynoModel(QAbstractItemModel):
                         NodeType.SPACE,
                         NodeType.ROOT,
                         NodeType.FOLDER,
+                        NodeType.SEARCH,
                     ]:
                         image = QPixmap(
                             os.path.abspath("./src/ico/icons8-folder-200.png")
@@ -498,11 +626,7 @@ class SynoModel(QAbstractItemModel):
                             self.thumbnail_size.height(),
                             Qt.AspectRatioMode.KeepAspectRatio,
                         )
-                    if node.space == SpaceType.ALBUM:
-                        # album can have photos in personal or shared space, no way to know
-                        shared = None
-                    else:
-                        shared = node.space == SpaceType.SHARED
+                    shared = node.isShared()
                     syno_key = node._raw_data["additional"]["thumbnail"]["cache_key"]
                     if CACHE_PIXMAP:
                         image = QPixmap()
@@ -592,7 +716,8 @@ class SynoModel(QAbstractItemModel):
             return QModelIndex()
         return index.internalPointer().absoluteFilePath()
 
-    def _find_in_childs(node, part):
+    def _find_in_childs(self, node: SynoNode, part: str):
+        """ (internal) find part foldername in nodes child """
         node.updateIfUnknownRowCount()
         for row in range(0, node.childCount()):
             child = node.child(row)
@@ -612,7 +737,16 @@ class SynoModel(QAbstractItemModel):
         """force update of row count (childs) for index"""
         if not index.isValid():
             return
-        index.internalPointer().updateRowCount()
+        node: SynoNode = index.internalPointer()
+        count = node.childCount()
+        if node.updateRowCount():
+            newCount = node.childCount()
+            log.info(f"updateRowCount {count} -> {newCount}")
+            if newCount == 0:
+                self.rowsRemoved.emit(index.parent(), 0, 0)
+            else:
+                self.rowsInserted.emit(index.parent(), 0, 0)
+
 
     def pathIndexes(self, path: str) -> list:
         """expand absolute path"""
@@ -620,11 +754,11 @@ class SynoModel(QAbstractItemModel):
         path = PurePosixPath(path)
         node = self._root
         for part in path.parts[1:]:
-            node = SynoModel._find_in_childs(node, part)
+            node = self._find_in_childs(node, part)
             if node is None:
                 log.warning(f"pathIndexes({path}) : part not found")
                 return []
-            indexes.append(QAbstractItemModel.createIndex(self, node._row, 0, node))
+            indexes.append(self.createIndex(node.row(), 0, node))
         return indexes
 
     def updateIfUnknownRowCount(self, index: QModelIndex) -> None:
@@ -649,6 +783,53 @@ class SynoModel(QAbstractItemModel):
         """ get node index """
         return index
 
+    def _getOrCreateSearchChild(self, nodeParent: SynoNode, name: str):
+        """get or create child in search space"""
+        node = nodeParent.findChild(name)
+        if node is None:
+            log.info(f"beginInsertRows to {nodeParent._data[0]}, pos:{nodeParent.childCount()}")
+            indexParent = self.createIndex(nodeParent.row(), 0, nodeParent)
+            self.beginInsertRows(indexParent, nodeParent.childCount(), nodeParent.childCount())
+            node = SynoNode(nodeParent.space, name, NodeType.SEARCH, nodeParent, nodeParent._model)
+            nodeParent.addChild(node)
+            if nodeParent.nb_folders == -1:
+                nodeParent.nb_folders = 0
+            nodeParent.nb_folders += 1
+            self.endInsertRows()
+        return node
+
+
+    def search(self, section: str, search: str, team: bool) -> QModelIndex:
+        """ search tag or keyword: create path, populate nodes"""
+        node = self.pathToNode("/Search")
+        if node is None:
+            log.error("No Search Space")
+            return QModelIndex()
+        if section not in ["tag", "keyword"]:
+            log.error(f"Section {section} unsupported")
+            return QModelIndex()
+        if section == "tag":
+            node = self._getOrCreateSearchChild(node, "Tag")
+        elif section == "keyword":
+            node = self._getOrCreateSearchChild(node, "Keyword")
+        teamName = "Shared" if team else "Personal"
+        node = self._getOrCreateSearchChild(node, teamName)
+        node = self._getOrCreateSearchChild(node, search)
+        node.searchContext = [section, search, team]
+        # populates photos
+        # node.updateRowCount()
+        node._createChildNodes()
+        return self.createIndex(node.row(), 0, node)
+
+
+    def removeNode(self, index: QModelIndex) -> None:
+        """ remove node and children """
+        node: SynoNode = index.internalPointer()
+        self.beginRemoveRows(index.parent(), node.row(), node.row())
+        log.info(f"Remove node(s) {node.dataColumn(0)}")
+        node.parent().removeChild(node)
+        self.endRemoveRows()
+
 
 class SynoSortFilterProxyModel(QSortFilterProxyModel):
 
@@ -663,6 +844,14 @@ class SynoSortFilterProxyModel(QSortFilterProxyModel):
         """return index from path"""
         return self.mapFromSource(self.sourceModel().pathIndex(path))
 
+    def search(self, section: str, search: str, team: bool) -> QModelIndex:
+        """search tag"""
+        return self.mapFromSource(self.sourceModel().search(section, search, team))
+
+    def removeNode(self, index: QModelIndex) -> None:
+        """ remove node from model """
+        self.sourceModel().removeNode(index.model().mapToSource(index))
+
     def nodePointer(self, index: QModelIndex) -> SynoNode:
         """ get SynoNode from index """
         if isinstance(index.model(), SynoSortFilterProxyModel):
@@ -676,9 +865,9 @@ class SynoSortFilterProxyModel(QSortFilterProxyModel):
         return index
 
     def lessThan(self, left: QModelIndex,  right:QModelIndex) -> bool:
-        """override oSortFilterProxyModel.lessThan """
+        """override QSortFilterProxyModel.lessThan """
         column = left.column()
-        # TODO : for future : change column index to headername 
+        # TODO : for future : change column index to headername
         if column in [2, 3, 5, 6, 7, 9]:
             leftNode: SynoNode = left.model().nodePointer(left)
             if leftNode.node_type != NodeType.FILE:

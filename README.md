@@ -15,7 +15,8 @@ An explorer application for Synology Photos using Python/Qt (PyQt6)
 
 - Program features :
   - download photos
-  - ... and that's all for this first version !
+  - view list personal tags, shared tags in Tab
+  - search photos with tags, keywords in personal or shared space. Results are shown in Search Space 
 
 
 

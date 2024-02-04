@@ -29,6 +29,7 @@ from PyQt6.QtWidgets import (
     QDockWidget,
     QFrame,
     QFileDialog,
+    QComboBox,
 )
 from PyQt6.QtGui import (
     QIcon,
@@ -71,7 +72,7 @@ from internalconfig import (
     VERSION,
     TAB_MAIN_EXPLORER,
     TAB_PERSONAL_TAGS,
-    TAB_SHARED_TAGS
+    TAB_SHARED_TAGS,
 )
 from cacheddownload import download_thumbnail
 from loggerwidget import LoggerWidget
@@ -81,6 +82,12 @@ from synotreeview import SynoTreeView
 from imagewidget import ImageWidget
 from uidialogs import LoginDialog, AboutDialog, FailedConnectDialog
 
+
+# search combo value
+WHERE_TAG_PERSONAL = "Tag Personal"
+WHERE_TAG_SHARED = "Tag Shared"
+WHERE_KEYWORD_PERSONAL = "Keyword Personal"
+WHERE_KEYWORD_SHARED = "Keyword Shared"
 
 # set logger in stdout
 log = logging.getLogger("main")
@@ -218,7 +225,7 @@ class App(QMainWindow):
         """init User Interface"""
         # Side explorer with dirs only
         self.sideExplorer = SynoTreeView()
-        self.sideExplorer.setModel(SynoModel(dirs_only=True))
+        self.sideExplorer.setModel(SynoModel(dirs_only=True, search=True))
         self.sideExplorer.hideColumn(3)
         self.sideExplorer.hideColumn(2)
         self.sideExplorer.hideColumn(1)
@@ -239,9 +246,9 @@ class App(QMainWindow):
         self.sideExplorer.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.sideExplorer.customContextMenuRequested.connect(self.sideContextItemMenu)
 
-        # model for explorer
         self.mainModel = SynoModel(
-            dirs_only=False, additionnal=["thumbnail", "exif", "resolution"]
+            dirs_only=False, additional=["thumbnail", "exif", "resolution"],
+            search=True,
         )
 
         # Top menus
@@ -315,6 +322,7 @@ class App(QMainWindow):
         self.sideExplorer.expandAbsolutePath(self.currentDir)
         self.navigate(self.mainExplorer.model().setRootPath(self.currentDir))
         self.show()
+        self.statusBar().showMessage(f"Welcome to {APP_NAME} version {VERSION}")
         log.info("END InitUI")
 
     def createTopMenu(self):
@@ -404,6 +412,7 @@ class App(QMainWindow):
         )
         viewMenu.addAction(self.tagsSharedAction)
 
+        viewMenu.addSeparator().setText("Dock Views")
 
         self.jsonViewAction = QAction("&JSON view", self)
         self.jsonViewAction.setStatusTip("Show JSON view")
@@ -467,10 +476,19 @@ class App(QMainWindow):
 
         self.searchField = QLineEdit()
         self.searchField.setPlaceholderText("Search")
+        self.searchField.returnPressed.connect(self.onSearch)
         splitter.addWidget(self.searchField)
 
+        self.searchWhere = QComboBox()
+        self.searchWhere.addItem(WHERE_TAG_PERSONAL)
+        self.searchWhere.addItem(WHERE_TAG_SHARED)
+        self.searchWhere.addItem(WHERE_KEYWORD_PERSONAL)
+        self.searchWhere.addItem(WHERE_KEYWORD_SHARED)
+        self.searchWhere.setEditable(False)
+        splitter.addWidget(self.searchWhere)
+
         splitter.setStretchFactor(10, 1)
-        splitter.setSizes([500, 200])
+        splitter.setSizes([500, 200, 100])
 
         self.toolbar.addWidget(self._navigateBackButton)
         self.toolbar.addWidget(self._navigateForwardButton)
@@ -552,7 +570,7 @@ class App(QMainWindow):
         self.tagsPersonalAction.setChecked(self.tab_widget.isTabExists(TAB_PERSONAL_TAGS))
         self.tagsSharedAction.setChecked(self.tab_widget.isTabExists(TAB_SHARED_TAGS))
 
-    def contextItemMenu(self):
+    def contextItemMenu(self, position):
         """create context menu main explorer"""
         menu = QMenu()
         self.updateEditMenu()
@@ -560,12 +578,38 @@ class App(QMainWindow):
         menu.addAction(self.downloadAction)
         menu.exec(QCursor.pos())
 
-    def sideContextItemMenu(self):
+    def sideContextItemMenu(self, position):
         """create context menu side explorer"""
         menu = QMenu()
         menu.addAction(self.sideDownloadToAction)
         menu.addAction(self.sideDownloadAction)
+        index = self.sideExplorer.indexAt(position)
+        node: SynoNode = index.internalPointer()
+        if node.node_type == NodeType.SEARCH:
+            menu.addSeparator()
+            removeAction = QAction("Remove search", self)
+            removeAction.setStatusTip("Remove search(s)")
+            removeAction.triggered.connect(lambda val, node=node: self.onRemoveTag(index))  # TODO ??
+            menu.addAction(removeAction)
         menu.exec(QCursor.pos())
+
+    def tabTagContextItemMenu(self, position, widget, shared):
+        """ create context menu for tab Tag"""
+        item: QTableWidgetItem = widget.itemAt(position)
+        parent = widget.parent()
+        parent = parent.parent()
+        print(widget.parent().windowTitle())
+        if item.column() != 0:
+            return
+        tagName = item.text()
+        menu = QMenu()
+        action = QAction("Search Tag", self)
+        action.setStatusTip(f'Search Tag "{tagName}"')
+        action.triggered.connect(lambda vv, section="tag", tag=tagName, shared=shared: self.Search(section, tag, shared))
+        menu.addAction(action)
+        menu.exec(QCursor.pos())
+
+
 
     def loginDialog(self):
         """login dialog : create new model, reset views"""
@@ -587,11 +631,12 @@ class App(QMainWindow):
             if not ret:
                 QApplication.quit()
         # set new models using new synophoto
-        self.mainModel = SynoModel(dirs_only=False)
+        self.mainModel = SynoModel(
+            dirs_only=False, additional=["thumbnail", "exif", "resolution"],
+            search=True,
+        )
         self.mainExplorer.setModel(self.mainModel)
-
-        self.sideModel = SynoModel(dirs_only=True)
-        self.sideExplorer.setModel(self.sideModel)
+        self.sideExplorer.setModel(SynoModel(dirs_only=True, search=True))
 
         # reset widgets
         self.json_view.setModel(JsonModel(data={}))
@@ -636,7 +681,7 @@ class App(QMainWindow):
         self.mainExplorer.selectionModel().clearSelection()
 
     def navigate(self, index):
-        """navigate - index must be SynoSortFilterProxyModel"""
+        """navigate - index from mainExplorer"""
         nodeIndex = index.model().nodeIndex(index)
         node = nodeIndex.internalPointer()
         log.info(f"navigate inode {node.inode} {node.dataColumn(0)}")
@@ -696,9 +741,9 @@ class App(QMainWindow):
             self.addressBar.selectAll()
             self.statusBar().showMessage("Error: Invalid address")
             return
-        self.navigate(self.sideExplorer.model().pathIndex(path))
+        self.navigate(self.mainModel.pathIndex(path))
 
-    def updateStatus(self, element=None):
+    def updateStatus(self, element: QModelIndex|str=None):
         """update status bar from path or QModelIndex"""
         log.info("updateStatus")
         if element is None:
@@ -713,7 +758,7 @@ class App(QMainWindow):
         self.mainModel.updateIfUnknownRowCount(index)
         status = ""
         node: SynoNode = index.internalPointer()
-        if node.node_type == NodeType.FOLDER:
+        if node.node_type in [NodeType.SPACE, NodeType.FOLDER, NodeType.SEARCH]:
             status = f"{node.foldersNumber()} folders,  {node.photosNumber()} photos"
         elif node.node_type == NodeType.FILE:
             parent = node.parent()
@@ -744,7 +789,7 @@ class App(QMainWindow):
     def onCurrentRowChangedInSideExpl(self, index: QModelIndex):
         """ signal selection changed (a folder) in side explorer"""
         log.info("on current row changed from left side")
-        path = self.sideExplorer.model().absoluteFilePath(index)
+        path = index.model().absoluteFilePath(index)
         self.updateStatus(path)
         self.navigate(self.mainExplorer.model().pathIndex(path))
 
@@ -754,6 +799,8 @@ class App(QMainWindow):
 
     def onCurrentRowChanged(self, index: QModelIndex):
         """selection changed in main explorer"""
+        if not index.isValid():
+            return
         node: SynoNode = index.model().nodePointer(index)
         data = node.rawData()
         # set json data
@@ -762,11 +809,7 @@ class App(QMainWindow):
         if node.node_type == NodeType.FOLDER:
             pass
         elif node.node_type == NodeType.FILE:
-            if node.space == SpaceType.ALBUM:
-                # album can have photos in personal or shared space, no way to know
-                shared = None
-            else:
-                shared = node.space == SpaceType.SHARED
+            shared = node.isShared()
             # use cached function :
             raw_image = download_thumbnail(
                 node.inode,
@@ -792,12 +835,39 @@ class App(QMainWindow):
                 self.thumbnailWidget.setImage(pixmap)
             log.debug(f"cache stats: {cache.stats()}")
 
-    def onShowTagsList(self, tabname):
+    def Search(self, section, searchText, shared):
+        """Search photos"""
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        # search in 2 models
+        index = self.mainExplorer.model().search(section, searchText, shared)
+        self.sideExplorer.model().search(section, searchText, shared)
+        self.navigate(index)
+        # expand and select path in sideExplorer
+        self.sideExplorer.setCurrentIndex(self.sideExplorer.expandAbsolutePath(self.currentDir))
+        QApplication.restoreOverrideCursor()
+        # search appears in main explorer : show it
+        self.tab_widget.setCurrentTab(TAB_MAIN_EXPLORER)
+        self.updateStatus(self.currentDir)
+
+    def onSearch(self):
+        """Enter in search bar"""
+        searchText = self.searchField.text()
+        where = self.searchWhere.currentText()
+        if where in [WHERE_TAG_PERSONAL, WHERE_TAG_SHARED]:
+            team = where == WHERE_TAG_SHARED
+            self.Search("tag", searchText, team)
+        elif where in [WHERE_KEYWORD_PERSONAL, WHERE_KEYWORD_SHARED]:
+            team = where == WHERE_KEYWORD_SHARED
+            self.Search("keyword", searchText, team)
+
+
+    def onShowTagsList(self, tabname: str):
         """open tab tags list"""
         tab = self.tab_widget.setCurrentTab(tabname)
         if tab is not None:
             # already open
             return
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         team = tabname == TAB_SHARED_TAGS
         tags = synofoto.api.general_tags(team=team)
         widget = QTableWidget(len(tags), 3)
@@ -806,7 +876,7 @@ class App(QMainWindow):
             item = QTableWidgetItem(tag["name"])
             item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             widget.setItem(row, 0, item)
-            # use IntIntSortTableItem for sort int column
+            # use IntIntSortTableItem for sort column of type Int
             item = IntSortTableItem(str(tag["id"]))
             item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             widget.setItem(row, 1, item)
@@ -816,6 +886,22 @@ class App(QMainWindow):
         widget.setSortingEnabled(True)
         widget.sortItems(0, Qt.SortOrder.AscendingOrder)
         self.tab_widget.addTab(widget, tabname)
+        QApplication.restoreOverrideCursor()
+        # self.updateStatus(f"activate {TAB_SHARED_TAGS}")
+        widget.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        widget.customContextMenuRequested.connect(
+            lambda pos, child=widget, shared=team: self.tabTagContextItemMenu(pos, child, shared))
+
+
+
+    def onRemoveTag(self, index: QModelIndex):
+        """ remove Tag(s) from models """
+        # remove node from 2 models : sideExplorer and mainExplorer
+        path = index.internalPointer().absoluteFilePath()
+        index = self.sideExplorer.model().pathIndex(path)
+        index.model().removeNode(index)
+        index = self.mainExplorer.model().pathIndex(path)
+        index.model().removeNode(index)
 
 
     def onDownload(self):
@@ -885,7 +971,7 @@ class App(QMainWindow):
             if node.node_type == NodeType.FILE:
                 log.info(f"Download photo inode {node.inode} {node.dataColumn(0)}")
                 photo_download(node, path)
-            elif node.node_type == NodeType.FOLDER:
+            elif node.node_type in [NodeType.FOLDER, NodeType.SEARCH]:
                 log.info(
                     f"Download photos folder inode {node.inode} {node.dataColumn(0)}"
                 )
@@ -924,11 +1010,7 @@ class App(QMainWindow):
 
         def get_thumbnail_cached(node: SynoNode):
             inode = node.inode
-            if node.space == SpaceType.ALBUM:
-                # album can have photos in personal or shared space, no way to know
-                shared = None
-            else:
-                shared = node.space == SpaceType.SHARED
+            shared = node.isShared()
             if not "additional" in node.rawData():
                 log.warning("No additionnal datas")
                 return None
@@ -970,11 +1052,7 @@ class App(QMainWindow):
     def get_thumbnail_cached(self, node: SynoNode):
         """ add thumbnail for download by thread pool"""
         inode = node.inode
-        if node.space == SpaceType.ALBUM:
-            # album can have photos in personal or shared space, no way to know
-            shared = None
-        else:
-            shared = node.space == SpaceType.SHARED
+        shared = node.isShared()
         if not "additional" in node.rawData():
             log.error("no additional fields")
             return None
@@ -1015,6 +1093,7 @@ class IntSortTableItem(QTableWidgetItem):
             return super(IntSortTableItem, self).__lt__(other)
 
 
+
 def formatJson(data):
     """try to replace timestamp with date """
     data = dict(data)
@@ -1052,4 +1131,11 @@ if __name__ == "__main__":
 
     app = QApplication(sys.argv)
     myApp = App()
+    # try:
+    #     app = QApplication(sys.argv)
+    #     myApp = App()
+    # except Exception as _e:
+    #     print(_e)
+    #     control_thread_pool.exit_loop()
+    #     download_thread_pool.shutdown(wait=True, cancel_futures=True)
     sys.exit(app.exec())

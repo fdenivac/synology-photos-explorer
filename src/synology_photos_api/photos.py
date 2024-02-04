@@ -80,8 +80,8 @@ class Photos:
     * thumbnail_download
 
     #### methods on keywords (search in geolocalisation address, filename, description, identifier, ...?)
-    * count_keyword
-    * search_keyword
+    * count_photos_with_keyword
+    * photos_with_keyword
 
     #### methods on tags (search in geolocalisation address, filename, description, identifier, ...?)
     * count_general_tags
@@ -440,7 +440,7 @@ class Photos:
             folder_id : folder identifier.
             team : personal or shared space
         ### kwargs parameters
-            offset, limit, sort_by, sort_direction, additionnal, ...
+            offset, limit, sort_by, sort_direction, additional, ...
         ### Return
           folder dict
         """
@@ -456,7 +456,7 @@ class Photos:
             folder_id : folder identifier
             team : personal or shared space
         ### kwargs parameters
-            offset, limit, sort_by, sort_direction, additionnal, ...
+            offset, limit, sort_by, sort_direction, additional, ...
         ### Return
           list of folder dict
         """
@@ -486,7 +486,7 @@ class Photos:
             root_folder : starting folder id for lookup
             team : personal or shared space
         ### kwargs parameters
-            offset, limit, sort_by, sort_direction, additionnal, ...
+            offset, limit, sort_by, sort_direction, additional, ...
         ### Return
           folder dict or None
         """
@@ -539,7 +539,7 @@ class Photos:
             folder_id : starting folder id for lookup
             team : personal or shared space
         ### kwargs parameters
-            offset, limit, sort_by, sort_direction, additionnal, ...
+            offset, limit, sort_by, sort_direction, additional, ...
         ### Return
           list of photo dict
         """
@@ -592,7 +592,7 @@ class Photos:
 
             sort_direction: in ["asc", "desc"],
 
-            additionnal : list in ["sharing_info", "thumbnail", ... ]
+            additional : list in ["sharing_info", "thumbnail", ... ]
 
             category : in ["normal_share_with_me", "normal", "shared"]
 
@@ -808,7 +808,7 @@ class Photos:
 
             sort_by : in ["filename", "filesize", "item_type", "takentime"],
 
-            additionnal : list in ["sharing_info", "thumbnail", ... ]
+            additional : list in ["sharing_info", "thumbnail", ... ]
         ### Return
             photo list
         """
@@ -850,7 +850,7 @@ class Photos:
             filters : filters
             team : personal or shared space
         ### kwargs parameters
-            offset, limit, sort_direction, additionnal
+            offset, limit, sort_direction, additional
 
             sort_by : in ["filename", "filesize", "item_type", "takentime"],
 
@@ -917,7 +917,7 @@ class Photos:
             photo_ids : photo identifier, or list of folder identifier
             team : personal or shared space
         ### kwargs parameters
-            offset, limit, sort_by, sort_direction, additionnal, ...
+            offset, limit, sort_by, sort_direction, additional, ...
         ### Return
             photos list
         """
@@ -1005,7 +1005,7 @@ class Photos:
     # methods on keywords
     #
 
-    def count_keyword(self, keyword: str, team: bool = False) -> int:
+    def count_photos_with_keyword(self, keyword: str, team: bool = False) -> int:
         """Count photos with keyword in geolocalisation address, filename, description, identifier, ...
         ### Parameters
             * keyword : keyword to search
@@ -1017,7 +1017,7 @@ class Photos:
         req_param = {"method": "count_item", "keyword": keyword}
         return self._request_data(api_name, req_param, method="post")["data"]["count"]
 
-    def search_keyword(
+    def photos_with_keyword(
         self, keyword: str, team: bool = False, **kwargs
     ) -> dict[str, object]:
         """Search photos with keyword in geolocalisation address, filename, description, identifier, ...
@@ -1027,7 +1027,7 @@ class Photos:
             * keyword : keyword to search
             * team : space to use: personal (`False`) or shared (`True`) space
         ### kwargs parameters
-            offset, limit, sort_by, sort_direction, additionnal, ...
+            offset, limit, sort_by, sort_direction, additional, ...
         ### Return
             photo list
         """
@@ -1138,7 +1138,7 @@ class Photos:
         for tag_obj in tags:
             if tag_obj["name"].lower() == tag.lower():
                 return tag_obj["item_count"]
-        return None
+        return 0
 
     def photos_with_tag(
         self, tag_name: str, team: bool = False, **kwargs
@@ -1148,7 +1148,7 @@ class Photos:
             * tag_name : tag to search
             * team : space to use: personal (`False`) or shared (`True`) space
         ### kwargs parameters
-            offset, limit, sort_by, sort_direction, additionnal, ...
+            offset, limit, sort_by, sort_direction, additional, ...
 
             sort_by : in ["filename", "filesize", "item_type", "takentime"],
 
@@ -1375,7 +1375,7 @@ class Photos:
             * start_time, end_time : date range of photos to retrieve
             * team : space to use: personal (`False`) or shared (`True`) space
         ### kwargs parameters
-            offset, limit, sort_by, sort_direction, additionnal, ...
+            offset, limit, sort_by, sort_direction, additional, ...
         ### Return
             photos list
 
