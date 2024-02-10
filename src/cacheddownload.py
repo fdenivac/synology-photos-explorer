@@ -16,7 +16,6 @@ from PyQt6.QtCore import (
 from internalconfig import CACHE_PIXMAP
 
 
-
 @cache.memoize(name=THUMB_CALLABLE_NAME, tag="thumb")
 def download_thumbnail(inode, cache_key, shared):
     """get thumbnail using cache"""

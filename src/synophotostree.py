@@ -1,30 +1,29 @@
 """
-TreeView for Synology Photos
-
-Code based on :
-    https://gist.github.com/nbassler/342fc56c42df27239fa5276b79fca8e6
-    based on :
-        http://trevorius.com/scrapbook/uncategorized/pyqt-custom-abstractitemmodel/
-
-
+TreeView demo application for Synology Photos (DSM 7)
 """
 
 from __future__ import annotations
-from typing import Any
+import os
 import sys
-from enum import Enum
 import logging
-from PyQt6 import QtCore, QtWidgets, QtGui
-from PyQt6.QtWidgets import (
-    QTreeView,
-)
+
+from PyQt6.QtWidgets import QApplication, QTreeView, QMessageBox
+
+from dotenv import load_dotenv
+
+from cache import control_thread_pool
 
 from synophotosmodel import SynoModel
+from photos_api import synofoto
+
+
+# take environment variables (addr, port ,user, password, ...) from .env file
+load_dotenv()
 
 
 # set logger in stdout
 log = logging.getLogger(__name__)
-log.setLevel(logging.WARNING)
+log.setLevel(logging.INFO)
 handler = logging.StreamHandler(sys.stdout)
 handler.setLevel(logging.DEBUG)
 formatter = logging.Formatter("%(message)s")
@@ -36,12 +35,13 @@ class SynoTreeView(QTreeView):
     def __init__(self):
         """Init Custom model"""
         QTreeView.__init__(self)
+        self.setWindowTitle("Synology Photos Tree")
+        self.setGeometry(0, 0, 500, 600)
         self.setModel(SynoModel(dirs_only=False))
-        # TODO if setHeaderHidden is False, so mousePressEvent position is wrong
-        self.setHeaderHidden(False)
-        self.hideColumn(3)
+        self.setHeaderHidden(True)
         self.hideColumn(2)
         self.hideColumn(1)
+        self.show()
 
     def mousePressEvent(self, event) -> None:
         """click on tree : update node count if needed"""
@@ -50,26 +50,42 @@ class SynoTreeView(QTreeView):
         if index.isValid():
             node = index.internalPointer()
             if node.isUnknownRowCount():
-                node.updateRowCount()
-                log.info(f"collapse/expand({node.childCount()}) for {node._data[0]}")
-                if node.childCount() == 0:
-                    # workaround for removing expand/collapse indicator
-                    self.collapse(index.parent())
-                    self.expand(index.parent())
+                index.model().updateRowCount(index)
+                log.info(f"update rows count before collapse/expand({node.childCount()}) for {node._data[0]}")
         return super().mousePressEvent(event)
 
 
-class SynoTree:
-    """ """
-
-    def __init__(self):
-        self.tw = SynoTreeView()
-        self.tw.setWindowTitle("Synology Photos Tree")
-        self.tw.setGeometry(0, 0, 500, 600)
-
-
 if __name__ == "__main__":
-    app = QtWidgets.QApplication(sys.argv)
-    mytree = SynoTree()
-    mytree.tw.show()
-    sys.exit(app.exec())
+    app = QApplication(sys.argv)
+
+    address = os.environ.get("SYNO_ADDR")
+    port = os.environ.get("SYNO_PORT")
+    username = os.environ.get("SYNO_USER")
+    password = os.environ.get("SYNO_PASSWORD")
+    secure = os.environ.get("SYNO_SECURE")
+    certverif = os.environ.get("SYNO_CERTVERIF")
+    otpcode = os.environ.get("SYNO_OPTCODE")
+
+    synofoto.login(address, port, username, password, secure, certverif, 7, False, otpcode)
+
+    status = "Connected" if synofoto.is_connected() else "Failed to connect"
+    log.info(f"{status} to Synology Photos ({os.environ.get('SYNO_ADDR')})")
+
+    open_app = True
+    if not synofoto.is_connected():
+        ret = QMessageBox.critical(
+            None,
+            "Synology Photos Error",
+            f"{status} to Synology Photos ({os.environ.get('SYNO_ADDR')})\n\n" "A fake empty model will be used.",
+            QMessageBox.StandardButton.Abort | QMessageBox.StandardButton.Ok,
+        )
+        if ret == QMessageBox.StandardButton.Abort:
+            open_app = False
+
+    if open_app:
+        # launch application
+        mytree = SynoTreeView()
+        app.exec()
+
+    # exit from download thread (created on init, not used here)
+    control_thread_pool.exit_loop()

@@ -26,9 +26,7 @@ class PhotosFakeEmpty:
     def count_folders(self, folder_id: int = 0, team: bool = False) -> int:
         return 0
 
-    def get_folder(
-        self, folder_id: int = 0, team: bool = False, **kwargs
-    ) -> dict[str, object]:
+    def get_folder(self, folder_id: int = 0, team: bool = False, **kwargs) -> dict[str, object]:
         return {"id": 0}
 
     def count_photos_in_folder(self, folder_id: int, team: bool = False) -> int:

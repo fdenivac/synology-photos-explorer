@@ -20,12 +20,8 @@ log = logging.getLogger(__name__)
 # set thumbnail cache
 THUMB_CALLABLE_NAME = "get_thumb"
 cache = Cache(
-    QSettings("fdenivac", "SynoPhotosExplorer").value(
-        "thumbcachepath", ".cache_synophoto"
-    ),
-    size_limit=QSettings("fdenivac", "SynoPhotosExplorer").value(
-        "thumbcachesize", 1024 * 1024 * 512
-    ),
+    QSettings("fdenivac", "SynoPhotosExplorer").value("thumbcachepath", ".cache_synophoto"),
+    size_limit=QSettings("fdenivac", "SynoPhotosExplorer").value("thumbcachesize", 1024 * 1024 * 512),
     statistics=1,
 )
 
@@ -90,9 +86,5 @@ download_thread_pool = ThreadPoolExecutor(max_workers=10, thread_name_prefix="th
 control_thread_pool = ControlDownloadPool()
 
 # thread cleaning futures
-futures_cleaner_thread = ThreadPoolExecutor(
-    max_workers=1, thread_name_prefix="futures_cleaner"
-)
-future_control_thread_pool = futures_cleaner_thread.submit(
-    control_thread_pool.loop_clean_futures
-)
+futures_cleaner_thread = ThreadPoolExecutor(max_workers=1, thread_name_prefix="futures_cleaner")
+future_control_thread_pool = futures_cleaner_thread.submit(control_thread_pool.loop_clean_futures)

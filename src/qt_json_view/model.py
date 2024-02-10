@@ -52,9 +52,7 @@ class JsonModel(QtGui.QStandardItemModel):
         if index.column() == 1 and role == QtCore.Qt.ItemDataRole.ForegroundRole:
             schema = index.data(SchemaRole) or {}
             default = schema.get("default")
-            if default is not None and default != index.data(
-                QtCore.Qt.ItemDataRole.DisplayRole
-            ):
+            if default is not None and default != index.data(QtCore.Qt.ItemDataRole.DisplayRole):
                 return QtGui.QBrush(self.NON_DEFAULT_COLOR)
 
         return super(JsonModel, self).data(index, role)
@@ -69,9 +67,7 @@ class JsonSortFilterProxyModel(QtCore.QSortFilterProxyModel):
 
     def filterAcceptsRow(self, sourceRow, sourceParent):
         """Accept the row if the parent has been accepted."""
-        index = self.sourceModel().index(
-            sourceRow, self.filterKeyColumn(), sourceParent
-        )
+        index = self.sourceModel().index(sourceRow, self.filterKeyColumn(), sourceParent)
         return self.accept_index(index)
 
     def accept_index(self, index):
@@ -89,8 +85,6 @@ class JsonSortFilterProxyModel(QtCore.QSortFilterProxyModel):
                     #     return True
                     parent = parent.parent()
             for row in range(index.model().rowCount(index)):
-                if self.accept_index(
-                    index.model().index(row, self.filterKeyColumn(), index)
-                ):
+                if self.accept_index(index.model().index(row, self.filterKeyColumn(), index)):
                     return True
         return False

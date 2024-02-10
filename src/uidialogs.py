@@ -14,19 +14,24 @@ from internalconfig import APP_NAME, VERSION
 class LoginDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
-        loadUi(os.path.join(os.path.realpath(os.path.dirname(__file__)), "ui/login.ui"), self)
+        loadUi(
+            os.path.join(os.path.realpath(os.path.dirname(__file__)), "ui/login.ui"),
+            self,
+        )
 
 
 class AboutDialog(QDialog):
     def __init__(self, parent=None):
-
         def replace(placeholder, newString):
             cursor = doc.find(placeholder, 0, QTextDocument.FindFlag.FindWholeWords)
             if not cursor.isNull():
                 cursor.insertText(newString)
 
         super().__init__(parent)
-        loadUi(os.path.join(os.path.realpath(os.path.dirname(__file__)), "ui/about.ui"), self)
+        loadUi(
+            os.path.join(os.path.realpath(os.path.dirname(__file__)), "ui/about.ui"),
+            self,
+        )
         doc = self.textEdit.document()
         replace("<APPNAME>", APP_NAME)
         replace("<VERSION>", VERSION)
@@ -35,5 +40,8 @@ class AboutDialog(QDialog):
 class FailedConnectDialog(QDialog):
     def __init__(self, details, parent=None):
         super().__init__(parent)
-        loadUi(os.path.join(os.path.realpath(os.path.dirname(__file__)), "ui/connectfailed.ui"), self)
+        loadUi(
+            os.path.join(os.path.realpath(os.path.dirname(__file__)), "ui/connectfailed.ui"),
+            self,
+        )
         self.errorDetails.setText(details)

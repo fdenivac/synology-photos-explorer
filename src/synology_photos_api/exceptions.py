@@ -1,3 +1,4 @@
+# fmt: off
 from .error_codes import error_codes, auth_error_codes, download_station_error_codes, file_station_error_codes
 from .error_codes import virtualization_error_codes
 

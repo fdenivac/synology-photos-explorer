@@ -1,5 +1,12 @@
 """
 Logging widget
+
+    Usage 
+        ...
+        self.logTextBox = LoggerWidget(self)
+        logging.getLogger().addHandler(self.logTextBox)
+        logging.getLogger().setLevel(logging.DEBUG)
+        ...
 """
 
 import logging
@@ -10,18 +17,6 @@ from PyQt6.QtCore import (
 from PyQt6.QtWidgets import (
     QPlainTextEdit,
 )
-
-"""
-Logger widget
-
-    Usage 
-        ...
-        self.logTextBox = LoggerWidget(self)
-        logging.getLogger().addHandler(self.logTextBox)
-        logging.getLogger().setLevel(logging.DEBUG)
-        ...
-    
-"""
 
 
 class LoggerWidget(QPlainTextEdit, logging.Handler):

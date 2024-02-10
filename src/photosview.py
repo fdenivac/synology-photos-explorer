@@ -24,6 +24,7 @@ from PyQt6.QtCore import (
 from synophotosmodel import SynoSortFilterProxyModel
 from internalconfig import USE_SORT_MODEL
 
+
 class PhotosIconView(QListView):
     """
     main explorer in icon mode
@@ -37,9 +38,7 @@ class PhotosIconView(QListView):
         self.setWordWrap(True)
         grid_size = 250
         cell_size = 240
-        thumb_size = QSize(
-            cell_size, cell_size - int(QFontMetrics(self.font()).height() * 5)
-        )
+        thumb_size = QSize(cell_size, cell_size - int(QFontMetrics(self.font()).height() * 5))
 
         self.setGridSize(QSize(grid_size, grid_size))
         self.curModel.setThumbnailSize(thumb_size)
@@ -76,7 +75,7 @@ class PhotosDetailsView(QTableView):
             self.setModel(self.proxyModel)
         else:
             self.setModel(model)
-        
+
         self.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
 
@@ -92,4 +91,3 @@ class PhotosDetailsView(QTableView):
         self.setFrameStyle(QFrame.Shape.NoFrame)
         self.setSortingEnabled(True)
         self.setEditTriggers(QAbstractItemView.EditTrigger.EditKeyPressed)
-

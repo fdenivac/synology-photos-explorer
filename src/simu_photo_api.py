@@ -55,9 +55,7 @@ class PhotosFake:
     def count_folders(self, folder_id: int = 0, team: bool = False) -> int:
         return len(fakeDatas[(folder_id, team)]["folders"])
 
-    def get_folder(
-        self, folder_id: int = 0, team: bool = False, **kwargs
-    ) -> dict[str, object]:
+    def get_folder(self, folder_id: int = 0, team: bool = False, **kwargs) -> dict[str, object]:
         return fakeDatas[(folder_id, team)]["json"]
         # return {
         #     "id": 0 if team else 1,
@@ -68,9 +66,7 @@ class PhotosFake:
         return len(fakeDatas[(folder_id, team)]["photos"])
         return 0
 
-    def photos_in_folder(
-        self, folder_id: int, team: bool = False, **kwargs
-    ) -> list[dict[str, object]]:
+    def photos_in_folder(self, folder_id: int, team: bool = False, **kwargs) -> list[dict[str, object]]:
         photos = []
         raw_folders = fakeDatas[(folder_id, team)]
         for photo in raw_folders["photos"]:
@@ -78,9 +74,7 @@ class PhotosFake:
             photos.append(raw_photo["json"])
         return photos
 
-    def list_folders(
-        self, folder_id: int, team: bool = False, **kwargs
-    ) -> list[dict[str, object]]:
+    def list_folders(self, folder_id: int, team: bool = False, **kwargs) -> list[dict[str, object]]:
         folders = []
         raw_folders = fakeDatas[(folder_id, team)]
         for folder in raw_folders["folders"]:

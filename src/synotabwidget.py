@@ -13,8 +13,10 @@ from internalconfig import TAB_MAIN_EXPLORER
 
 log = logging.getLogger(__name__)
 
+
 class SynoTabWidget(QWidget):
-    """ Manage Tab """
+    """Manage Tab"""
+
     def __init__(self, parent=None):
         super(SynoTabWidget, self).__init__(parent=parent)
         self.layout = QVBoxLayout(self)
@@ -30,24 +32,24 @@ class SynoTabWidget(QWidget):
         self.tabs.tabCloseRequested.connect(self.onCloseTab)
 
     def addTab(self, widget: QWidget, title: str) -> None:
-        """ add new Tab and activate it"""
+        """add new Tab and activate it"""
         self.tabs.addTab(widget, title)
         self.tabs.setCurrentWidget(widget)
 
     def isTabExists(self, title: str) -> bool:
-        """ return True if a tab title exists """
+        """return True if a tab title exists"""
         index = self.tabIndex(title)
         return index is not None
 
-    def tabIndex(self, title: str) -> int|None:
-        """ return index of tab with title"""
+    def tabIndex(self, title: str) -> int | None:
+        """return index of tab with title"""
         for itab in range(0, self.tabs.count()):
             if self.tabs.tabText(itab) == title:
                 return itab
         return None
 
-    def setCurrentTab(self, title: str) -> int|None:
-        """ activate tab by title """
+    def setCurrentTab(self, title: str) -> int | None:
+        """activate tab by title"""
         iTab = self.tabIndex(title)
         if iTab is None:
             return None
@@ -55,7 +57,7 @@ class SynoTabWidget(QWidget):
         return iTab
 
     def onCloseTab(self, index: int) -> None:
-        """ close tab (except Main Explorer)""" 
+        """close tab (except Main Explorer)"""
         if self.tabs.tabText(index) == TAB_MAIN_EXPLORER:
             log.warning("Close of Main Explorer refused")
             return

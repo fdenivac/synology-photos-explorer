@@ -31,7 +31,7 @@ VERSION = "1.1"
 TAB_MAIN_EXPLORER = "Main Explorer"
 TAB_PERSONAL_TAGS = "Personal Tags list"
 TAB_SHARED_TAGS = "Shared Tags list"
-TAB_SEARCH ="Search"
+TAB_SEARCH = "Search"
 
 # number of photos description to read by api photos call
 PHOTOS_CHUNK = 5000

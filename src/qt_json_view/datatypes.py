@@ -83,9 +83,7 @@ class DataType(object):
         if isinstance(model, QtCore.QAbstractProxyModel):
             index = model.mapToSource(index)
             model = model.sourceModel()
-        return_value = super(delegate.__class__, delegate).setModelData(
-            editor, model, index
-        )
+        return_value = super(delegate.__class__, delegate).setModelData(editor, model, index)
         model.data_object.update(model.serialize())
         return return_value
 
@@ -105,12 +103,8 @@ class DataType(object):
         item = QtGui.QStandardItem(key)
         item.setData(datatype, TypeRole)
         item.setData(datatype.__class__.__name__, QtCore.Qt.ItemDataRole.ToolTipRole)
-        item.setData(
-            QtGui.QBrush(datatype.COLOR), QtCore.Qt.ItemDataRole.ForegroundRole
-        )
-        item.setFlags(
-            QtCore.Qt.ItemFlag.ItemIsSelectable | QtCore.Qt.ItemFlag.ItemIsEnabled
-        )
+        item.setData(QtGui.QBrush(datatype.COLOR), QtCore.Qt.ItemDataRole.ForegroundRole)
+        item.setFlags(QtCore.Qt.ItemFlag.ItemIsSelectable | QtCore.Qt.ItemFlag.ItemIsEnabled)
         if editable and model.editable_keys:
             item.setFlags(item.flags() | QtCore.Qt.ItemFlag.ItemIsEditable)
         return item
@@ -130,15 +124,11 @@ class DataType(object):
             schema.get("tooltip", self.__class__.__name__),
             QtCore.Qt.ItemDataRole.ToolTipRole,
         )
-        item.setFlags(
-            QtCore.Qt.ItemFlag.ItemIsSelectable | QtCore.Qt.ItemFlag.ItemIsEnabled
-        )
+        item.setFlags(QtCore.Qt.ItemFlag.ItemIsSelectable | QtCore.Qt.ItemFlag.ItemIsEnabled)
         if model.editable_values and schema.get("editable", True):
             item.setFlags(item.flags() | QtCore.Qt.ItemFlag.ItemIsEditable)
         else:
-            item.setData(
-                QtGui.QBrush(self.INACTIVE_COLOR), QtCore.Qt.ItemDataRole.ForegroundRole
-            )
+            item.setData(QtGui.QBrush(self.INACTIVE_COLOR), QtCore.Qt.ItemDataRole.ForegroundRole)
         return item
 
     def clicked(self, parent, index, pos, rect):
@@ -219,19 +209,13 @@ class BoolType(DataType):
         options = QtWidgets.QStyleOptionButton()
         options.rect = option.rect.adjusted(-20, 0, 0, 0)
         options.state |= QtWidgets.QStyle.StateFlag.State_Active
-        options.state |= (
-            QtWidgets.QStyle.StateFlag.State_On
-            if checked
-            else QtWidgets.QStyle.StateFlag.State_Off
-        )
+        options.state |= QtWidgets.QStyle.StateFlag.State_On if checked else QtWidgets.QStyle.StateFlag.State_Off
         options.state |= (
             QtWidgets.QStyle.StateFlag.State_Enabled
             if index.flags() & QtCore.Qt.ItemFlag.ItemIsEditable
             else QtWidgets.QStyle.StateFlag.State_ReadOnly
         )
-        QtWidgets.QApplication.style().drawControl(
-            QtWidgets.QStyle.ControlElement.CE_CheckBox, options, painter
-        )
+        QtWidgets.QApplication.style().drawControl(QtWidgets.QStyle.ControlElement.CE_CheckBox, options, painter)
         painter.restore()
 
     def clicked(self, parent, index, pos, rect):
@@ -265,9 +249,7 @@ class ListType(DataType):
     def next(self, model, data, parent):
         for i, value in enumerate(data):
             type_ = match_type(value, key=i, schema=model.current_schema)
-            key_item = type_.key_item(
-                str(i), datatype=type_, editable=False, model=model
-            )
+            key_item = type_.key_item(str(i), datatype=type_, editable=False, model=model)
             value_item = type_.value_item(value, model=model, key=i)
             parent.appendRow([key_item, value_item])
             type_.next(model, data=value, parent=key_item)
@@ -283,9 +265,7 @@ class ListType(DataType):
             QtGui.QBrush(QtCore.Qt.GlobalColor.lightGray),
             QtCore.Qt.ItemDataRole.ForegroundRole,
         )
-        item.setFlags(
-            QtCore.Qt.ItemFlag.ItemIsSelectable | QtCore.Qt.ItemFlag.ItemIsEnabled
-        )
+        item.setFlags(QtCore.Qt.ItemFlag.ItemIsSelectable | QtCore.Qt.ItemFlag.ItemIsEnabled)
         schema = model.current_schema.get(key, {})
         item.setData(
             schema.get("tooltip", self.__class__.__name__),
@@ -353,9 +333,7 @@ class DictType(DataType):
             # QtGui.QBrush(QtCore.Qt.GlobalColor.lightGray),
             QtCore.Qt.ItemDataRole.ForegroundRole,
         )
-        item.setFlags(
-            QtCore.Qt.ItemFlag.ItemIsSelectable | QtCore.Qt.ItemFlag.ItemIsEnabled
-        )
+        item.setFlags(QtCore.Qt.ItemFlag.ItemIsSelectable | QtCore.Qt.ItemFlag.ItemIsEnabled)
         schema = model.current_schema.get(key, {})
         item.setData(
             schema.get("tooltip", self.__class__.__name__),
@@ -386,9 +364,7 @@ class AnyType(DataType):
 
     def value_item(self, value, model, key):
         item = super(AnyType, self).value_item(str(value), model, key)
-        item.setFlags(
-            QtCore.Qt.ItemFlag.ItemIsSelectable | QtCore.Qt.ItemFlag.ItemIsEnabled
-        )
+        item.setFlags(QtCore.Qt.ItemFlag.ItemIsSelectable | QtCore.Qt.ItemFlag.ItemIsEnabled)
         return item
 
 
@@ -439,17 +415,13 @@ class RangeType(DataType):
         spinbox_option.buttonSymbols = QtWidgets.QAbstractSpinBox.NoButtons
         for i, key in enumerate(self.KEYS):
             if i > 0:
-                spinbox_option.rect.adjust(
-                    spinbox_option.rect.width(), 0, spinbox_option.rect.width(), 0
-                )
+                spinbox_option.rect.adjust(spinbox_option.rect.width(), 0, spinbox_option.rect.width(), 0)
             QtWidgets.QApplication.style().drawComplexControl(
                 QtWidgets.QStyle.ComplexControl.CC_SpinBox, spinbox_option, painter
             )
             value = str(data[key])
             value_rect = QtCore.QRectF(spinbox_option.rect.adjusted(6, 1, -2, -2))
-            value = metrics.elidedText(
-                value, QtCore.Qt.TextElideMode.ElideRight, value_rect.width() - 20
-            )
+            value = metrics.elidedText(value, QtCore.Qt.TextElideMode.ElideRight, value_rect.width() - 20)
             painter.drawText(value_rect, value)
 
         painter.restore()
@@ -557,9 +529,7 @@ class UrlType(DataType):
     def actions(self, index):
         actions = super(UrlType, self).actions(index)
         explore = QtWidgets.QAction("Explore ...", None)
-        explore.triggered.connect(
-            partial(self._explore, index.data(QtCore.Qt.DisplayRole))
-        )
+        explore.triggered.connect(partial(self._explore, index.data(QtCore.Qt.DisplayRole)))
         actions.append(explore)
         return actions
 
@@ -593,9 +563,7 @@ class UrlType(DataType):
 
         if model.editable_values:
             if index.data(SchemaRole).get("editable", True):
-                return super(delegate.__class__, delegate).createEditor(
-                    parent, option, index
-                )
+                return super(delegate.__class__, delegate).createEditor(parent, option, index)
 
     def value_item(self, value, model, key=None):
         """Create an item for the value column for this data type."""

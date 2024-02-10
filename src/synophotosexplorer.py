@@ -101,6 +101,7 @@ handler.setFormatter(
     )
 )
 log.addHandler(handler)
+log.info("Logger in place")
 
 
 class History:
@@ -139,7 +140,8 @@ class History:
 
 
 def fatalConnect():
-    """ call by timer on init when connect to synology fails """
+    """call by timer on init when connect to synology fails"""
+
     def getMainWindow():
         for widget in QApplication.instance().topLevelWidgets():
             if isinstance(widget, QMainWindow):
@@ -153,7 +155,8 @@ def fatalConnect():
 
 
 class App(QMainWindow):
-    """ main application """
+    """main application"""
+
     def __init__(self, parent=None):
         super(App, self).__init__(parent=parent)
 
@@ -213,12 +216,8 @@ class App(QMainWindow):
         secure = os.environ.get("SYNO_SECURE") if secure is None else secure
         certverif = os.environ.get("SYNO_CERTVERIF") if certverif is None else certverif
         otpcode = os.environ.get("SYNO_OPTCODE") if otpcode is None else otpcode
-        synofoto.login(
-            address, port, username, password, secure, certverif, 7, debug, otpcode
-        )
-        log.info(
-            f"connected = {synofoto.is_connected()} to Synology Photos ({os.environ.get('SYNO_ADDR')})"
-        )
+        synofoto.login(address, port, username, password, secure, certverif, 7, debug, otpcode)
+        log.info(f"connected = {synofoto.is_connected()} to Synology Photos ({os.environ.get('SYNO_ADDR')})")
         return synofoto.is_connected()
 
     def initUI(self):
@@ -230,9 +229,7 @@ class App(QMainWindow):
         self.sideExplorer.hideColumn(2)
         self.sideExplorer.hideColumn(1)
         self.sideExplorer.header().hide()
-        self.sideExplorer.selectionModel().currentRowChanged.connect(
-            self.onCurrentRowChangedInSideExpl
-        )
+        self.sideExplorer.selectionModel().currentRowChanged.connect(self.onCurrentRowChangedInSideExpl)
 
         self.sideExplorer.setFrameStyle(QFrame.Shape.NoFrame)
         self.sideExplorer.uniformRowHeights = True
@@ -247,7 +244,8 @@ class App(QMainWindow):
         self.sideExplorer.customContextMenuRequested.connect(self.sideContextItemMenu)
 
         self.mainModel = SynoModel(
-            dirs_only=False, additional=["thumbnail", "exif", "resolution"],
+            dirs_only=False,
+            additional=["thumbnail", "exif", "resolution"],
             search=True,
         )
 
@@ -316,6 +314,17 @@ class App(QMainWindow):
             self.log_view = self.logTextBox
             self.log_dock.setWidget(self.logTextBox)
 
+        # restore pinned search
+        self.settings.beginGroup("pinnedSearch")
+        keys = self.settings.childKeys()
+        for key in keys:
+            parts = self.settings.value(key).split("/")
+            section, shared, searchText = parts[2:]
+            shared = shared.lower() == "shared"
+            self.mainExplorer.model().createSearch(section, searchText, shared)
+            self.sideExplorer.model().createSearch(section, searchText, shared)
+        self.settings.endGroup()
+
         # initial path
         self.currentDir = self.settings.value("initialpath", INITIAL_PATH)
         self.sideExplorer.model().setRootPath(self.currentDir)
@@ -326,7 +335,7 @@ class App(QMainWindow):
         log.info("END InitUI")
 
     def createTopMenu(self):
-        """ create initial menus"""
+        """create initial menus"""
         # Add menus
         menuBar = self.menuBar()
 
@@ -371,9 +380,7 @@ class App(QMainWindow):
         editMenu.addAction(self.downloadToAction)
 
         self.downloadAction = QAction("Download", self)
-        self.downloadAction.setStatusTip(
-            "Download selected elements to 'Download' folder"
-        )
+        self.downloadAction.setStatusTip("Download selected elements to 'Download' folder")
         self.downloadAction.triggered.connect(self.onDownload)
         editMenu.addAction(self.downloadAction)
 
@@ -381,17 +388,13 @@ class App(QMainWindow):
         self.iconsViewAction = QAction("&Thumbnails", self)
         self.iconsViewAction.setStatusTip("Thumbnail list view")
         self.iconsViewAction.setCheckable(True)
-        self.iconsViewAction.triggered.connect(
-            lambda setview, view="Icons": self.changeView(view)
-        )
+        self.iconsViewAction.triggered.connect(lambda setview, view="Icons": self.changeView(view))
         viewMenu.addAction(self.iconsViewAction)
 
         self.detailViewAction = QAction("&Details", self)
         self.detailViewAction.setStatusTip("Details view")
         self.detailViewAction.setCheckable(True)
-        self.detailViewAction.triggered.connect(
-            lambda setview, view="Details": self.changeView(view)
-        )
+        self.detailViewAction.triggered.connect(lambda setview, view="Details": self.changeView(view))
         viewMenu.addAction(self.detailViewAction)
 
         viewMenu.addSeparator()
@@ -399,17 +402,13 @@ class App(QMainWindow):
         self.tagsPersonalAction = QAction(TAB_PERSONAL_TAGS, self)
         self.tagsPersonalAction.setStatusTip("Open tab for Personal Tags")
         self.tagsPersonalAction.setCheckable(True)
-        self.tagsPersonalAction.triggered.connect(
-            lambda setview, tab=TAB_PERSONAL_TAGS, : self.onShowTagsList(tab)
-        )
+        self.tagsPersonalAction.triggered.connect(lambda setview, tab=TAB_PERSONAL_TAGS,: self.onShowTagsList(tab))
         viewMenu.addAction(self.tagsPersonalAction)
 
         self.tagsSharedAction = QAction(TAB_SHARED_TAGS, self)
         self.tagsSharedAction.setStatusTip("Open tab for Shared Tags")
         self.tagsSharedAction.setCheckable(True)
-        self.tagsSharedAction.triggered.connect(
-            lambda setview, tab=TAB_SHARED_TAGS: self.onShowTagsList(tab)
-        )
+        self.tagsSharedAction.triggered.connect(lambda setview, tab=TAB_SHARED_TAGS: self.onShowTagsList(tab))
         viewMenu.addAction(self.tagsSharedAction)
 
         viewMenu.addSeparator().setText("Dock Views")
@@ -442,7 +441,7 @@ class App(QMainWindow):
         helpMenu.addAction(aboutAction)
 
     def createActionBar(self):
-        """ initial action bar"""
+        """initial action bar"""
         self.toolbar = self.addToolBar("actionToolBar")
         self.toolbar.setObjectName("action_toolbar")
         self.toolbar.setMovable(False)
@@ -450,16 +449,12 @@ class App(QMainWindow):
 
         self._navigateBackButton = QToolButton()
         self._navigateBackButton.setIcon(QIcon("./src/ico/arrow-180.png"))
-        self._navigateBackButton.setToolButtonStyle(
-            Qt.ToolButtonStyle.ToolButtonIconOnly
-        )
+        self._navigateBackButton.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
         self._navigateBackButton.clicked.connect(self.navigateBack)
 
         self._navigateForwardButton = QToolButton()
         self._navigateForwardButton.setIcon(QIcon("./src/ico/arrow.png"))
-        self._navigateForwardButton.setToolButtonStyle(
-            Qt.ToolButtonStyle.ToolButtonIconOnly
-        )
+        self._navigateForwardButton.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
         self._navigateForwardButton.clicked.connect(self.navigateForward)
 
         self._navigateUpButton = QToolButton()
@@ -517,17 +512,11 @@ class App(QMainWindow):
 
         selectionModel = QItemSelectionModel(self.mainExplorer.model())
         self.mainExplorer.setSelectionModel(selectionModel)
-        self.mainExplorer.selectionModel().currentRowChanged.connect(
-            self.onCurrentRowChanged
-        )
-        self.mainExplorer.selectionModel().selectionChanged.connect(
-            self.onSelectionChanged
-        )
+        self.mainExplorer.selectionModel().currentRowChanged.connect(self.onCurrentRowChanged)
+        self.mainExplorer.selectionModel().selectionChanged.connect(self.onSelectionChanged)
         if hasattr(self, "explorerSplitter"):
             self.explorerSplitter.replaceWidget(1, self.mainExplorer)
-            self.mainExplorer.setRootIndex(
-                self.mainExplorer.model().setRootPath(self.currentDir)
-            )
+            self.mainExplorer.setRootIndex(self.mainExplorer.model().setRootPath(self.currentDir))
 
     def closeEvent(self, event):
         """close app"""
@@ -559,7 +548,7 @@ class App(QMainWindow):
         super(App, self).closeEvent(event)
 
     def quitApp(self):
-        """ action quit application"""
+        """action quit application"""
         self.close()
 
     def updateEditMenu(self):
@@ -587,14 +576,27 @@ class App(QMainWindow):
         node: SynoNode = index.internalPointer()
         if node.node_type == NodeType.SEARCH:
             menu.addSeparator()
-            removeAction = QAction("Remove search", self)
-            removeAction.setStatusTip("Remove search(s)")
-            removeAction.triggered.connect(lambda val, node=node: self.onRemoveTag(index))  # TODO ??
-            menu.addAction(removeAction)
+            # remove
+            action = QAction("Remove search", self)
+            action.setStatusTip("Remove search(s)")
+            action.triggered.connect(lambda val, node=node: self.onRemoveTag(index))
+            menu.addAction(action)
+            # pin
+            action = QAction("Pin search", self)
+            action.setStatusTip("Pin search permanently in space")
+            action.triggered.connect(lambda val, node=node: self.onPinSearch(index))
+            action.setEnabled(not self.isPinnedSearch(index))
+            menu.addAction(action)
+            # unpin
+            action = QAction("Unpin search", self)
+            action.setStatusTip("Remove pinned search")
+            action.triggered.connect(lambda val, node=node: self.onUnpinSearch(index))
+            action.setEnabled(self.isPinnedSearch(index))
+            menu.addAction(action)
         menu.exec(QCursor.pos())
 
     def tabTagContextItemMenu(self, position, widget, shared):
-        """ create context menu for tab Tag"""
+        """create context menu for tab Tag"""
         item: QTableWidgetItem = widget.itemAt(position)
         parent = widget.parent()
         parent = parent.parent()
@@ -605,11 +607,11 @@ class App(QMainWindow):
         menu = QMenu()
         action = QAction("Search Tag", self)
         action.setStatusTip(f'Search Tag "{tagName}"')
-        action.triggered.connect(lambda vv, section="tag", tag=tagName, shared=shared: self.Search(section, tag, shared))
+        action.triggered.connect(
+            lambda vv, section="tag", tag=tagName, shared=shared: self.Search(section, tag, shared)
+        )
         menu.addAction(action)
         menu.exec(QCursor.pos())
-
-
 
     def loginDialog(self):
         """login dialog : create new model, reset views"""
@@ -631,12 +633,11 @@ class App(QMainWindow):
             if not ret:
                 QApplication.quit()
         # set new models using new synophoto
-        self.mainModel = SynoModel(
-            dirs_only=False, additional=["thumbnail", "exif", "resolution"],
-            search=True,
-        )
+        self.mainModel = SynoModel(dirs_only=False)
         self.mainExplorer.setModel(self.mainModel)
-        self.sideExplorer.setModel(SynoModel(dirs_only=True, search=True))
+
+        self.sideModel = SynoModel(dirs_only=True)
+        self.sideExplorer.setModel(self.sideModel)
 
         # reset widgets
         self.json_view.setModel(JsonModel(data={}))
@@ -651,17 +652,15 @@ class App(QMainWindow):
 
         # TODO : may be something wrong : signals lost after setmodel !?
         #  as workaround (but enough ?) :
-        self.sideExplorer.selectionModel().currentRowChanged.connect(
-            self.onCurrentRowChangedInSideExpl
-        )
+        self.sideExplorer.selectionModel().currentRowChanged.connect(self.onCurrentRowChangedInSideExpl)
         self.changeView(self.currentExplorerView)
 
     def about(self):
-        """dialog about app """
+        """dialog about app"""
         AboutDialog(self).exec()
 
     def showJsonView(self, event):
-        """ show dock JSON view """
+        """show dock JSON view"""
         self.json_dock.setHidden(not event)
 
     def showThumbView(self, event):
@@ -695,9 +694,7 @@ class App(QMainWindow):
         child = node.child(0)
         if child:
             indexChild = self.mainModel.createIndex(child.row(), 0, child)
-            self.mainExplorer.selectionModel().setCurrentIndex(
-                indexChild, QItemSelectionModel.SelectionFlag.Clear
-            )
+            self.mainExplorer.selectionModel().setCurrentIndex(indexChild, QItemSelectionModel.SelectionFlag.Clear)
             self.mainExplorer.scrollTo(indexChild)
         self.setWindowTitle(f"Synology Photos Explorer - {self.currentDir}")
         self.addressBar.setText(self.currentDir)
@@ -709,12 +706,12 @@ class App(QMainWindow):
         self.history.append(self.currentDir)
 
     def navigateUp(self):
-        """ navigate parent folder """
+        """navigate parent folder"""
         self.currentDir = os.path.dirname(self.currentDir)
         self.navigate(self.mainModel.setRootPath(self.currentDir))
 
     def navigateForward(self):
-        """ navigate next folder in history"""
+        """navigate next folder in history"""
         log.info("navigateForward")
         path = self.history.forward()
         if path:
@@ -722,7 +719,7 @@ class App(QMainWindow):
             self.sideExplorer.setCurrentIndex(index)
 
     def navigateBack(self):
-        """ navigate previous folder in history"""
+        """navigate previous folder in history"""
         log.info("navigateBack")
         path = self.history.back()
         if path:
@@ -730,7 +727,7 @@ class App(QMainWindow):
             self.sideExplorer.setCurrentIndex(index)
 
     def navigateAddress(self):
-        """ enter in address bar => navigate
+        """enter in address bar => navigate
         Warning : case sensitive
         """
         path = self.addressBar.text()
@@ -743,17 +740,15 @@ class App(QMainWindow):
             return
         self.navigate(self.mainModel.pathIndex(path))
 
-    def updateStatus(self, element: QModelIndex|str=None):
+    def updateStatus(self, element: QModelIndex | str = None):
         """update status bar from path or QModelIndex"""
         log.info("updateStatus")
         if element is None:
             index = self.mainExplorer.selectionModel().currentIndex()
         else:
-            index = (
-                element
-                if isinstance(element, QModelIndex)
-                else self.mainModel.pathIndex(element)
-            )
+            index = element if isinstance(element, QModelIndex) else self.mainModel.pathIndex(element)
+        if index.model() is None:
+            assert False
         index = index.model().nodeIndex(index)
         self.mainModel.updateIfUnknownRowCount(index)
         status = ""
@@ -763,38 +758,33 @@ class App(QMainWindow):
         elif node.node_type == NodeType.FILE:
             parent = node.parent()
             if parent.node_type == NodeType.FOLDER:
-                status = (
-                    f"{parent.foldersNumber()} folders,  {parent.photosNumber()} photos"
-                )
+                status = f"{parent.foldersNumber()} folders,  {parent.photosNumber()} photos"
         else:
             return
         selectedCount = len(
-            [
-                index
-                for index in self.mainExplorer.selectionModel().selectedIndexes()
-                if index.column() == 0
-            ]
+            [index for index in self.mainExplorer.selectionModel().selectedIndexes() if index.column() == 0]
         )
         if selectedCount > 0:
             status += f" ({selectedCount} elements selected)"
         self.statusBar().showMessage(status)
 
     def onDoubleClick(self, index):
-        """ signal doubleClick in mainExplorer for open folder"""
+        """signal doubleClick in mainExplorer for open folder"""
         node = index.model().nodePointer(index)
         if node.isDir():
             self.navigate(index)
             self.download_childs_thumbnail(node)
 
     def onCurrentRowChangedInSideExpl(self, index: QModelIndex):
-        """ signal selection changed (a folder) in side explorer"""
+        """signal selection changed (a folder) in side explorer"""
         log.info("on current row changed from left side")
         path = index.model().absoluteFilePath(index)
         self.updateStatus(path)
+        log.info(f"change row side : {path}")
         self.navigate(self.mainExplorer.model().pathIndex(path))
 
     def onSelectionChanged(self):
-        """ signal selection changed in mainExplorer"""
+        """signal selection changed in mainExplorer"""
         self.updateStatus()
 
     def onCurrentRowChanged(self, index: QModelIndex):
@@ -860,6 +850,42 @@ class App(QMainWindow):
             team = where == WHERE_KEYWORD_SHARED
             self.Search("keyword", searchText, team)
 
+    def onPinSearch(self, index):
+        """pin search"""
+        path = index.internalPointer().absoluteFilePath()
+        # get a "place" in registry
+        place = 1
+        while True:
+            if self.settings.value(f"pinnedSearch/{place}", None) is None:
+                break
+            place += 1
+        self.settings.setValue(f"pinnedSearch/{place}", path)
+
+    def onUnpinSearch(self, index: QModelIndex) -> None:
+        """unpin search"""
+        path = index.internalPointer().absoluteFilePath()
+        # search in registry
+        self.settings.beginGroup("pinnedSearch")
+        keys = self.settings.childKeys()
+        for key in keys:
+            regPath = self.settings.value(key)
+            if path == regPath:
+                self.settings.remove(key)
+                break
+        self.settings.endGroup()
+
+    def isPinnedSearch(self, index: QModelIndex) -> bool:
+        """return True if search is pinned"""
+        path = index.internalPointer().absoluteFilePath()
+        # search in registry
+        self.settings.beginGroup("pinnedSearch")
+        keys = self.settings.childKeys()
+        for key in keys:
+            if path == self.settings.value(key):
+                self.settings.endGroup()
+                return True
+        self.settings.endGroup()
+        return False
 
     def onShowTagsList(self, tabname: str):
         """open tab tags list"""
@@ -890,12 +916,11 @@ class App(QMainWindow):
         # self.updateStatus(f"activate {TAB_SHARED_TAGS}")
         widget.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         widget.customContextMenuRequested.connect(
-            lambda pos, child=widget, shared=team: self.tabTagContextItemMenu(pos, child, shared))
-
-
+            lambda pos, child=widget, shared=team: self.tabTagContextItemMenu(pos, child, shared)
+        )
 
     def onRemoveTag(self, index: QModelIndex):
-        """ remove Tag(s) from models """
+        """remove Tag(s) from models"""
         # remove node from 2 models : sideExplorer and mainExplorer
         path = index.internalPointer().absoluteFilePath()
         index = self.sideExplorer.model().pathIndex(path)
@@ -903,12 +928,9 @@ class App(QMainWindow):
         index = self.mainExplorer.model().pathIndex(path)
         index.model().removeNode(index)
 
-
     def onDownload(self):
         """download photos in `download` folder"""
-        self.downloadSelected(
-            self.mainExplorer.selectionModel().selectedIndexes(), get_download_path()
-        )
+        self.downloadSelected(self.mainExplorer.selectionModel().selectedIndexes(), get_download_path())
 
     def onDownloadTo(self):
         """download photos in folder to choose"""
@@ -916,21 +938,13 @@ class App(QMainWindow):
         folder = dlg.getExistingDirectory(self, "Select directory to download")
         if not folder:
             return
-        self.downloadSelected(
-            self.mainExplorer.selectionModel().selectedIndexes(), folder
-        )
+        self.downloadSelected(self.mainExplorer.selectionModel().selectedIndexes(), folder)
 
     def sideSelectedToMainIndexes(self):
         """return selected folder of sideExplorer in mainEplorer indexes"""
-        sideIndexes = [
-            index
-            for index in self.sideExplorer.selectionModel().selectedIndexes()
-            if index.column() == 0
-        ]
+        sideIndexes = [index for index in self.sideExplorer.selectionModel().selectedIndexes() if index.column() == 0]
         return [
-            self.mainExplorer.model().pathIndex(
-                self.sideExplorer.model().absoluteFilePath(index)
-            )
+            self.mainExplorer.model().pathIndex(self.sideExplorer.model().absoluteFilePath(index))
             for index in sideIndexes
         ]
 
@@ -950,11 +964,7 @@ class App(QMainWindow):
         """download photos in folder"""
 
         def photo_download(node: SynoNode, destination: str):
-            shared = (
-                node.space == SpaceType.SHARED
-                if not node.space == SpaceType.ALBUM
-                else None
-            )
+            shared = node.space == SpaceType.SHARED if not node.space == SpaceType.ALBUM else None
             try:
                 raw_image = synofoto.api.photo_download(node.inode, shared)
             except Exception as _e:
@@ -972,9 +982,7 @@ class App(QMainWindow):
                 log.info(f"Download photo inode {node.inode} {node.dataColumn(0)}")
                 photo_download(node, path)
             elif node.node_type in [NodeType.FOLDER, NodeType.SEARCH]:
-                log.info(
-                    f"Download photos folder inode {node.inode} {node.dataColumn(0)}"
-                )
+                log.info(f"Download photos folder inode {node.inode} {node.dataColumn(0)}")
                 dest = os.path.join(path, node.dataColumn(0))
                 os.makedirs(dest, exist_ok=True)
                 for ichild in range(0, node.childCount()):
@@ -995,9 +1003,7 @@ class App(QMainWindow):
                 self.futureDownloadChilds.result()
             self.eventCancelThumb.clear()
             node.child(0)  # ensure that all child nodes created
-            self.futureDownloadChilds = download_thread_pool.submit(
-                self._thread_download_childs_thumbnail, node
-            )
+            self.futureDownloadChilds = download_thread_pool.submit(self._thread_download_childs_thumbnail, node)
         else:
             for iChild in range(0, node.childCount()):
                 child = node.child(iChild)
@@ -1029,9 +1035,7 @@ class App(QMainWindow):
             if key in cache:
                 # nothing to do
                 return
-            future = download_thread_pool.submit(
-                download_thumbnail, inode, syno_key, shared
-            )
+            future = download_thread_pool.submit(download_thumbnail, inode, syno_key, shared)
             # add to future pool
             control_thread_pool.add_future(future)
 
@@ -1050,7 +1054,7 @@ class App(QMainWindow):
         log.info("thread childs download end")
 
     def get_thumbnail_cached(self, node: SynoNode):
-        """ add thumbnail for download by thread pool"""
+        """add thumbnail for download by thread pool"""
         inode = node.inode
         shared = node.isShared()
         if not "additional" in node.rawData():
@@ -1071,9 +1075,7 @@ class App(QMainWindow):
         if key in cache:
             # nothing to do
             return
-        future = download_thread_pool.submit(
-            download_thumbnail, inode, syno_key, shared
-        )
+        future = download_thread_pool.submit(download_thumbnail, inode, syno_key, shared)
         # add to future pool
         control_thread_pool.add_future(future)
 
@@ -1086,6 +1088,7 @@ class IntSortTableItem(QTableWidgetItem):
 
     Use with QTableWidget
     """
+
     def __lt__(self, other):
         try:
             return int(self.text()) < int(other.text())
@@ -1093,9 +1096,8 @@ class IntSortTableItem(QTableWidgetItem):
             return super(IntSortTableItem, self).__lt__(other)
 
 
-
 def formatJson(data):
-    """try to replace timestamp with date """
+    """try to replace timestamp with date"""
     data = dict(data)
 
     def replace(key, div=1):
@@ -1110,7 +1112,7 @@ def formatJson(data):
 
 
 def get_download_path():
-    """ return standard download folder """
+    """return standard download folder"""
     if os.name == "nt":
         sub_key = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Shell Folders"
         downloads_guid = "{374DE290-123F-4565-9164-39C4925E467B}"
