@@ -4,9 +4,12 @@ Encapsulate Synology Photos API
 A fake API is set when login failed
 
 """
+
 from typing import Optional
 import logging
 from synology_photos_api.photos import Photos
+from synology_photos_api.exceptions import PhotosError
+
 from synology_photos_api.exceptions import SynoBaseException
 
 log = logging.getLogger(__name__)
@@ -72,6 +75,17 @@ class PhotosAPI:
                 self.exception = str(_e.error_message)
             else:
                 self.exception = str(_e)
+            self.api = PhotosFakeEmpty()
+            return
+        # now we are connected, but sometimes, a exception occurs on first api call with :
+        #   (err 119 [Invalid session / SID not found.]) Error 119 - Invalid session / SID not found
+        # so try to get user_info for test
+        try:
+            self.api.get_userinfo()
+        except PhotosError as _e:
+            self.connected = False
+            self.exception = str(_e.error_message)
+            self.api.logout()
             self.api = PhotosFakeEmpty()
 
     def is_connected(self) -> bool:

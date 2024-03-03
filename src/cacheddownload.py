@@ -2,7 +2,7 @@
     Thumbnails download cached function
 """
 
-from cache import cache, THUMB_CALLABLE_NAME
+from cache import thumbcache, photocache, THUMB_CALLABLE_NAME, PHOTO_CALLABLE_NAME
 from PyQt6.QtGui import (
     QImage,
     QPixmap,
@@ -16,7 +16,7 @@ from PyQt6.QtCore import (
 from internalconfig import CACHE_PIXMAP
 
 
-@cache.memoize(name=THUMB_CALLABLE_NAME, tag="thumb")
+@thumbcache.memoize(name=THUMB_CALLABLE_NAME, tag="thumb")
 def download_thumbnail(inode, cache_key, shared):
     """get thumbnail using cache"""
     from photos_api import synofoto
@@ -38,3 +38,10 @@ def download_thumbnail(inode, cache_key, shared):
         pixmap.save(buffer, "PNG")
         return array.data()
     return synofoto.api.thumbnail_download(inode, "sm", cache_key, shared)
+
+@photocache.memoize(name=THUMB_CALLABLE_NAME, tag="photo")
+def download_photo(inode, shared):
+    """get thumbnail using cache"""
+    from photos_api import synofoto
+
+    return synofoto.api.photo_download(inode, shared)

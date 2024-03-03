@@ -19,9 +19,17 @@ log = logging.getLogger(__name__)
 
 # set thumbnail cache
 THUMB_CALLABLE_NAME = "get_thumb"
-cache = Cache(
-    QSettings("fdenivac", "SynoPhotosExplorer").value("thumbcachepath", ".cache_synophoto"),
+thumbcache = Cache(
+    QSettings("fdenivac", "SynoPhotosExplorer").value("thumbcachepath", ".thumbcache_synophoto"),
     size_limit=QSettings("fdenivac", "SynoPhotosExplorer").value("thumbcachesize", 1024 * 1024 * 512),
+    statistics=1,
+)
+
+# set photo cache
+PHOTO_CALLABLE_NAME = "get_photo"
+photocache = Cache(
+    QSettings("fdenivac", "SynoPhotosExplorer").value("photocachepath", ".photocache_synophoto"),
+    size_limit=QSettings("fdenivac", "SynoPhotosExplorer").value("photocachesize", 1024 * 1024 * 512),
     statistics=1,
 )
 

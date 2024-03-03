@@ -11,13 +11,14 @@ An explorer application for Synology Photos using Python/Qt (PyQt6)
 
 - Implements QAbstractItemModel and QStandardItem for TreeView / ListView with QSortFilterProxyModel
 
-- Uses cache for thumbnails
 
 - Program features :
+  - uses cache for thumbnails and photos
   - download photos
   - view list personal tags, shared tags in Tab
   - search photos with tags, keywords in personal or shared space. Results are shown in Search Space
   - pin/unpin photo searchs in Search Space
+  - slideshow windows
 
 
 

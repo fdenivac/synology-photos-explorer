@@ -12,15 +12,15 @@ from typing import Optional, Any
 import json
 from datetime import datetime, timedelta
 import pytz
-from . import auth as syn
-from .exceptions import PhotosError
+from . import base_api
+from .exceptions import APIError, PhotosError
 
 
 # error code when raising PhotosError from this file
 API_ERROR = 1212
 
 
-class Photos:
+class Photos(base_api.BaseApi):
     """Implements access to APIs Synology Photo (DSM 7)
 
     ### Notes :
@@ -318,24 +318,14 @@ class Photos:
         otp_code: Optional[str] = None,
     ) -> None:
         """Constructor : Login in Synology Photo"""
-        self.session: syn.Authentication = syn.Authentication(
-            ip_address,
-            port,
-            username,
-            password,
-            secure,
-            cert_verify,
-            dsm_version,
-            debug,
-            otp_code,
+        super(Photos, self).__init__(
+            ip_address, port, username, password, secure, cert_verify, dsm_version, debug, otp_code
         )
 
-        self.session.login("Foto")
         self.session.get_api_list("Foto")
 
         self.request_data: Any = self.session.request_data
         self.photos_list: Any = self.session.app_api_list
-        self._sid: str = self.session.sid
         self.base_url: str = self.session.base_url
 
         self._userinfo: Any = None
@@ -587,12 +577,14 @@ class Photos:
             kwargs["sort_by"] = "album_name"
         return self._method_list("SYNO.Foto.Browse.Album", http_method="post", **kwargs)["data"]["list"]
 
-    def count_albums(self) -> int:
+    def count_albums(self, **kwargs) -> int:
         """Count albums
+        ### kwargs parameters
+        category : in ["normal_share_with_me", ...]
         ### Return
             albums count
         """
-        return self._count("SYNO.Foto.Browse.Album")
+        return self._count("SYNO.Foto.Browse.Album", **kwargs)
 
     def suggest_condition(
         self,
@@ -760,12 +752,12 @@ class Photos:
 
         return self._request_data("SYNO.Foto.Sharing.Misc", req_param)
 
-    def count_photos_in_album(self, album_id: int) -> int:
+    def count_photos_in_album(self, album_id: int, **kwargs) -> int:
         """Count photo in an album
         ### Return
             photos count
         """
-        return self._count("SYNO.Foto.Browse.Item", album_id=album_id)
+        return self._count("SYNO.Foto.Browse.Item", album_id=album_id, **kwargs)
 
     def photos_in_album(self, album_id: int = 0, **kwargs) -> dict[str, object]:
         """List photos in album
@@ -782,7 +774,10 @@ class Photos:
         ### Return
             photo list
         """
-        req_param = dict({"album_id": album_id}, **kwargs)
+        if isinstance(album_id, str):
+            req_param = dict({"passphrase": album_id}, **kwargs)
+        else:
+            req_param = dict({"album_id": album_id}, **kwargs)
         if "id" in req_param:
             req_param["method"] = "get"
         return self._method_list("SYNO.Foto.Browse.Item", http_method="post", **req_param)["data"]["list"]
@@ -907,9 +902,10 @@ class Photos:
         if isinstance(photo_id, int):
             photo_id = [photo_id]
         req_param = {"method": "download", "unit_id": photo_id}
-        data = self._request_data(api_name, req_param, method="post", response_json=False)
-        if data.text.startswith('{"error"'):
-            raise PhotosError(API_ERROR, f"Photo {data.reason} (code:{data.status_code})")
+        try:
+            data = self._request_data(api_name, req_param, method="post", response_json=False)
+        except PhotosError as _e:
+            raise PhotosError(APIError(API_ERROR, f"photo {photo_id} not found")) from _e
         return data.content
 
     def thumbnail_download(
@@ -939,7 +935,7 @@ class Photos:
                     cache_key = photos[0]["additional"]["thumbnail"]["cache_key"]
                     break
             if not cache_key:
-                raise PhotosError(API_ERROR, f"photo {photo_id} not found)")
+                raise PhotosError(APIError(API_ERROR, f"thumbnail {photo_id} not found"))
         api_name = "SYNO.FotoTeam.Thumbnail" if team else "SYNO.Foto.Thumbnail"
         req_param = {
             "method": "get",
@@ -948,9 +944,10 @@ class Photos:
             "type": "unit",
             "cache_key": cache_key,
         }
-        data = self._request_data(api_name, req_param, method="post", response_json=False)
-        if data.status_code != 200:
-            raise PhotosError(API_ERROR, f"Thumbnail {data.reason} (code:{data.status_code})")
+        try:
+            data = self._request_data(api_name, req_param, method="post", response_json=False)
+        except PhotosError as _e:
+            raise PhotosError(API_ERROR, f"thumbnail {photo_id} not found") from _e
         return data.content
 
     #
@@ -1005,7 +1002,7 @@ class Photos:
         api_name = "SYNO.FotoTeam.Browse.GeneralTag" if team else "SYNO.Foto.Browse.GeneralTag"
         return self._count(api_name)
 
-    def general_tags(self, team: bool = False, **kwargs) -> dict[str, object]:
+    def general_tags(self, team: bool = False, **kwargs) -> list[dict[str, object]]:
         """Get all tags (identifiers)
         ### Parameters
             * team : space to use: personal (`False`) or shared (`True`) space

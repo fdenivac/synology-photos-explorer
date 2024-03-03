@@ -17,6 +17,9 @@ CACHE_PIXMAP = False
 # sort and filter
 USE_SORT_MODEL = True
 
+# use combo or icons for mode view in toolbar
+USE_COMBO_VIEW = False
+
 # various config
 # ===============
 
@@ -25,7 +28,7 @@ INITIAL_PATH = "/Personal"
 
 # app name and version
 APP_NAME = "Synology Photos Explorer"
-VERSION = "1.1"
+VERSION = "1.2"
 
 # Tab names (tabs operations by title)
 TAB_MAIN_EXPLORER = "Main Explorer"

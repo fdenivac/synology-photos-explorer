@@ -467,8 +467,8 @@ class SynoNode(QStandardItem):
         """get raw data : the json"""
         return self._raw_data
 
-    def isShared(self) -> bool:
-        """return True if node is in Shared Space"""
+    def isShared(self) -> bool | None:
+        """return True if node is in Shared Space, False in Personal Space, None for Album Space"""
         if self.space == SpaceType.ALBUM:
             # album can have photos in personal or shared space, no way to know
             shared = None
@@ -856,6 +856,12 @@ class SynoSortFilterProxyModel(QSortFilterProxyModel):
     def pathIndex(self, path: str) -> QModelIndex:
         """return index from path"""
         return self.mapFromSource(self.sourceModel().pathIndex(path))
+
+    def absoluteFilePath(self, index: QModelIndex) -> str:
+        """return index from path"""
+        if isinstance(index.model(), SynoSortFilterProxyModel):
+            index = index.model().mapToSource(index)
+        return self.sourceModel().absoluteFilePath(index)
 
     def search(self, section: str, search: str, team: bool) -> QModelIndex:
         """search for tag or keyword"""

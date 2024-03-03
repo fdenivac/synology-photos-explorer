@@ -57,9 +57,8 @@ The files in this folder are the minimal, slightly modified versions of the proj
   * thumbnail_download
 
   #### methods on keywords (search in geolocalisation address, filename, description, identifier, ...?)
-    * count_photos_with_keyword
-    * photos_with_keyword
-
+  * count_keyword
+  * search_keyword
 
   #### methods on tags (search in geolocalisation address, filename, description, identifier, ...?)
   * count_general_tags

@@ -16,6 +16,7 @@ from threading import Event
 
 from PyQt6.QtWidgets import (
     QApplication,
+    QAbstractItemView,
     QTableWidget,
     QTableWidgetItem,
     QLineEdit,
@@ -43,12 +44,14 @@ from PyQt6.QtCore import (
     Qt,
     QModelIndex,
     QItemSelectionModel,
+    QItemSelection,
+    QItemSelectionRange,
     QSettings,
     QTimer,
 )
 
 from diskcache.core import args_to_key as get_cache_key
-from cache import cache, download_thread_pool, THUMB_CALLABLE_NAME, control_thread_pool
+from cache import thumbcache, download_thread_pool, THUMB_CALLABLE_NAME, control_thread_pool
 
 from qt_json_view.model import JsonModel
 from qt_json_view.view import JsonView
@@ -66,6 +69,7 @@ from photos_api import synofoto
 from internalconfig import (
     USE_LOG_WIDGET,
     USE_THREAD_CHILDS,
+    USE_COMBO_VIEW,
     INITIAL_PATH,
     APP_NAME,
     CACHE_PIXMAP,
@@ -74,6 +78,7 @@ from internalconfig import (
     TAB_PERSONAL_TAGS,
     TAB_SHARED_TAGS,
 )
+from pyqt_slideshow.slideshow import SlideShow
 from cacheddownload import download_thumbnail
 from loggerwidget import LoggerWidget
 from synotabwidget import SynoTabWidget
@@ -88,6 +93,12 @@ WHERE_TAG_PERSONAL = "Tag Personal"
 WHERE_TAG_SHARED = "Tag Shared"
 WHERE_KEYWORD_PERSONAL = "Keyword Personal"
 WHERE_KEYWORD_SHARED = "Keyword Shared"
+
+# widget order in main splitter
+WIDGET_TREE_EXPLORER = 0
+WIDGET_LIST_EXPLORER = 1
+WIDGET_SLIDESHOW = 2
+
 
 # set logger in stdout
 log = logging.getLogger("main")
@@ -183,13 +194,30 @@ class App(QMainWindow):
         self.restoreGeometry(self.settings.value("mainwinpos", bytes("", "utf-8")))
         self.restoreGeometry(self.settings.value("mainwinpos", bytes("", "utf-8")))
         self.restoreState(self.settings.value("mainwinstate", bytes("", "utf-8")))
+        self.explorerSplitter.restoreState(self.settings.value("explorersplittersizes", bytes("", "utf-8")))
+        if self.settings.value("slideshowfloating") == "true":
+            self.onDetachSlideshow()
+            self.slideshow.restoreGeometry(self.settings.value("slideshowpos", bytes("", "utf-8")))
+            if self.slideshow.isFullScreen():
+                self.toggleSlideshowFullScreen()
+        hidden = self.settings.value("explorersplitterhide", ["true", "true", "true"])
+        self.sideExplorer.setHidden(hidden[0] == "true")
+        self.mainExplorer.setHidden(hidden[1] == "true")
+        self.slideshow.setHidden(hidden[2] == "true")
         self.restoreDockWidget(self.json_dock)
-        self.jsonViewAction.setChecked(not self.json_dock.isHidden())
+        self.actionJsonView.setChecked(not self.json_dock.isHidden())
         self.restoreDockWidget(self.thumbnail_dock)
-        self.thumbViewAction.setChecked(not self.thumbnail_dock.isHidden())
+        self.actionThumbView.setChecked(not self.thumbnail_dock.isHidden())
+        self.actionShowTreeExpl.setChecked(not self.explorerSplitter.widget(WIDGET_TREE_EXPLORER).isHidden())
+        self.actionShowListExpl.setChecked(not self.explorerSplitter.widget(WIDGET_LIST_EXPLORER).isHidden())
+        self.actionShowSlideshow.setChecked(self.slideshow.isHidden())
         if USE_LOG_WIDGET:
             self.restoreDockWidget(self.log_dock)
-            self.logViewAction.setChecked(not self.log_dock.isHidden())
+            self.actionLogView.setChecked(not self.log_dock.isHidden())
+
+        self.statusBar().showMessage(f"Welcome to {APP_NAME} version {VERSION}")
+        self.updateToolbar()
+        self.show()
 
         # display fatal error if Synology API failed to connect
         if not synofoto.is_connected():
@@ -249,12 +277,19 @@ class App(QMainWindow):
             search=True,
         )
 
+        self.currentExplorerView = self.settings.value("viewtype", "Details")
+
         # Top menus
         self.createTopMenu()
         self.createActionBar()
 
+        # photos view/slideshow
+        self.slideshow = None
+        self.createSlideshowWidget(False)
+        self.parentSlideshow = None
+        self.modeFullscreen = False
+
         # Main explorer
-        self.currentExplorerView = self.settings.value("viewtype", "Details")
         self.changeView(self.currentExplorerView)
 
         # Set layout and views
@@ -264,11 +299,14 @@ class App(QMainWindow):
         explorerLayout = QHBoxLayout()
         explorerLayout.setContentsMargins(0, 0, 0, 0)
 
+        # create splitter for tree explorer + list explorer + slideshow
         self.explorerSplitter = QSplitter(Qt.Orientation.Horizontal)
+        # WARNING: do not change order unless change WIDGET_TREE_EXPLORER; WIDGET_LIST_EXPLORER, WIDGET_SLIDESHOW
         self.explorerSplitter.addWidget(self.sideExplorer)
         self.explorerSplitter.addWidget(self.mainExplorer)
+        self.explorerSplitter.addWidget(self.slideshow)
         self.explorerSplitter.setStretchFactor(1, 2)
-        self.explorerSplitter.setSizes([400, 800])
+        self.explorerSplitter.setSizes([400, 800, 200])
         explorerLayout.addWidget(self.explorerSplitter)
 
         # create tab, add main explorer
@@ -325,13 +363,14 @@ class App(QMainWindow):
             self.sideExplorer.model().createSearch(section, searchText, shared)
         self.settings.endGroup()
 
-        # initial path
-        self.currentDir = self.settings.value("initialpath", INITIAL_PATH)
-        self.sideExplorer.model().setRootPath(self.currentDir)
-        self.sideExplorer.expandAbsolutePath(self.currentDir)
-        self.navigate(self.mainExplorer.model().setRootPath(self.currentDir))
-        self.show()
-        self.statusBar().showMessage(f"Welcome to {APP_NAME} version {VERSION}")
+        # set initial path
+        self.currentDir = ""
+        currentDir = self.settings.value("initialpath", INITIAL_PATH)
+        self.sideExplorer.model().setRootPath(currentDir)
+        self.sideExplorer.expandAbsolutePath(currentDir)
+        self.navigate(self.mainExplorer.model().setRootPath(currentDir))
+        # self.setMainExplorerIndex("first")
+
         log.info("END InitUI")
 
     def createTopMenu(self):
@@ -345,100 +384,168 @@ class App(QMainWindow):
         editMenu.aboutToShow.connect(self.updateEditMenu)
         viewMenu = menuBar.addMenu("&View")
         viewMenu.aboutToShow.connect(self.updateEditMenu)
+        slideshowMenu = menuBar.addMenu("&Slideshow")
+        slideshowMenu.aboutToShow.connect(self.updateSlideshowMenu)
         helpMenu = menuBar.addMenu("&Help")
 
         # File
-        loginAction = QAction("&Synology login ...", self)
-        loginAction.triggered.connect(self.loginDialog)
-        fileMenu.addAction(loginAction)
+        action = QAction("&Synology login ...", self)
+        action.triggered.connect(self.loginDialog)
+        fileMenu.addAction(action)
 
         fileMenu.addSeparator()
 
-        exitAction = QAction("&Quit", self)
-        exitAction.triggered.connect(self.quitApp)
-        exitAction.setShortcut("Ctrl+Q")
-        fileMenu.addAction(exitAction)
+        action = QAction("&Quit", self)
+        action.triggered.connect(self.quitApp)
+        action.setShortcut("Ctrl+Q")
+        fileMenu.addAction(action)
 
         # Edit
-        selectAllAction = QAction("&Select All", self)
-        selectAllAction.setStatusTip("Select All")
-        selectAllAction.setShortcut("Ctrl+A")
-        selectAllAction.triggered.connect(self.selectAll)
-        editMenu.addAction(selectAllAction)
+        action = QAction("&Select All", self)
+        action.setStatusTip("Select All")
+        action.setShortcut("Ctrl+A")
+        action.triggered.connect(self.selectAll)
+        editMenu.addAction(action)
 
-        unselectAllAction = QAction("&Unselect All", self)
-        unselectAllAction.setStatusTip("Unselect All")
-        unselectAllAction.setShortcut("Ctrl+D")
-        unselectAllAction.triggered.connect(self.unselectAll)
-        editMenu.addAction(unselectAllAction)
+        action = QAction("&Unselect All", self)
+        action.setStatusTip("Unselect All")
+        action.setShortcut("Ctrl+D")
+        action.triggered.connect(self.unselectAll)
+        editMenu.addAction(action)
 
         editMenu.addSeparator()
 
-        self.downloadToAction = QAction("Download To ...", self)
-        self.downloadToAction.setStatusTip("Download selected elements to folder")
-        self.downloadToAction.triggered.connect(self.onDownloadTo)
-        editMenu.addAction(self.downloadToAction)
+        self.actionDownloadTo = QAction("Download To ...", self)
+        self.actionDownloadTo.setStatusTip("Download selected elements to folder")
+        self.actionDownloadTo.triggered.connect(self.onDownloadTo)
+        editMenu.addAction(self.actionDownloadTo)
 
-        self.downloadAction = QAction("Download", self)
-        self.downloadAction.setStatusTip("Download selected elements to 'Download' folder")
-        self.downloadAction.triggered.connect(self.onDownload)
-        editMenu.addAction(self.downloadAction)
+        self.actionDownload = QAction("Download", self)
+        self.actionDownload.setStatusTip("Download selected elements to 'Download' folder")
+        self.actionDownload.triggered.connect(self.onDownload)
+        editMenu.addAction(self.actionDownload)
 
         # View
-        self.iconsViewAction = QAction("&Thumbnails", self)
-        self.iconsViewAction.setStatusTip("Thumbnail list view")
-        self.iconsViewAction.setCheckable(True)
-        self.iconsViewAction.triggered.connect(lambda setview, view="Icons": self.changeView(view))
-        viewMenu.addAction(self.iconsViewAction)
+        self.actionIconsView = QAction("&Thumbnails", self)
+        self.actionIconsView.setStatusTip("Thumbnail list view")
+        self.actionIconsView.setCheckable(True)
+        self.actionIconsView.triggered.connect(lambda setview, view="Icons": self.changeView(view))
+        viewMenu.addAction(self.actionIconsView)
 
-        self.detailViewAction = QAction("&Details", self)
-        self.detailViewAction.setStatusTip("Details view")
-        self.detailViewAction.setCheckable(True)
-        self.detailViewAction.triggered.connect(lambda setview, view="Details": self.changeView(view))
-        viewMenu.addAction(self.detailViewAction)
+        self.actionDetailsView = QAction("&Details", self)
+        self.actionDetailsView.setStatusTip("Details view")
+        self.actionDetailsView.setCheckable(True)
+        self.actionDetailsView.triggered.connect(lambda setview, view="Details": self.changeView(view))
+        viewMenu.addAction(self.actionDetailsView)
 
         viewMenu.addSeparator()
 
-        self.tagsPersonalAction = QAction(TAB_PERSONAL_TAGS, self)
-        self.tagsPersonalAction.setStatusTip("Open tab for Personal Tags")
-        self.tagsPersonalAction.setCheckable(True)
-        self.tagsPersonalAction.triggered.connect(lambda setview, tab=TAB_PERSONAL_TAGS,: self.onShowTagsList(tab))
-        viewMenu.addAction(self.tagsPersonalAction)
+        self.actionTagsPersonal = QAction(TAB_PERSONAL_TAGS, self)
+        self.actionTagsPersonal.setStatusTip("Open tab for Personal Tags")
+        self.actionTagsPersonal.setCheckable(True)
+        self.actionTagsPersonal.triggered.connect(lambda setview, tab=TAB_PERSONAL_TAGS,: self.onShowTagsList(tab))
+        viewMenu.addAction(self.actionTagsPersonal)
 
-        self.tagsSharedAction = QAction(TAB_SHARED_TAGS, self)
-        self.tagsSharedAction.setStatusTip("Open tab for Shared Tags")
-        self.tagsSharedAction.setCheckable(True)
-        self.tagsSharedAction.triggered.connect(lambda setview, tab=TAB_SHARED_TAGS: self.onShowTagsList(tab))
-        viewMenu.addAction(self.tagsSharedAction)
+        self.actionTagsShared = QAction(TAB_SHARED_TAGS, self)
+        self.actionTagsShared.setStatusTip("Open tab for Shared Tags")
+        self.actionTagsShared.setCheckable(True)
+        self.actionTagsShared.triggered.connect(lambda setview, tab=TAB_SHARED_TAGS: self.onShowTagsList(tab))
+        viewMenu.addAction(self.actionTagsShared)
 
         viewMenu.addSeparator().setText("Dock Views")
 
-        self.jsonViewAction = QAction("&JSON view", self)
-        self.jsonViewAction.setStatusTip("Show JSON view")
-        self.jsonViewAction.setShortcut("Ctrl+J")
-        self.jsonViewAction.setCheckable(True)
-        self.jsonViewAction.triggered.connect(self.showJsonView)
-        viewMenu.addAction(self.jsonViewAction)
+        self.actionJsonView = QAction("&JSON view", self)
+        self.actionJsonView.setStatusTip("Show JSON view")
+        self.actionJsonView.setShortcut("Ctrl+J")
+        self.actionJsonView.setCheckable(True)
+        self.actionJsonView.triggered.connect(self.showJsonView)
+        viewMenu.addAction(self.actionJsonView)
 
-        self.thumbViewAction = QAction("&Thumbnail view", self)
-        self.thumbViewAction.setStatusTip("Show Thumbnail view")
-        self.thumbViewAction.setShortcut("Ctrl+T")
-        self.thumbViewAction.setCheckable(True)
-        self.thumbViewAction.triggered.connect(self.showThumbView)
-        viewMenu.addAction(self.thumbViewAction)
+        self.actionThumbView = QAction("&Thumbnail view", self)
+        self.actionThumbView.setStatusTip("Show Thumbnail view")
+        self.actionThumbView.setShortcut("Ctrl+T")
+        self.actionThumbView.setCheckable(True)
+        self.actionThumbView.triggered.connect(self.showThumbView)
+        viewMenu.addAction(self.actionThumbView)
 
         if USE_LOG_WIDGET:
-            self.logViewAction = QAction("&Log view", self)
-            self.logViewAction.setStatusTip("Show Log view")
-            self.logViewAction.setCheckable(True)
-            self.logViewAction.triggered.connect(self.showLogView)
-            viewMenu.addAction(self.logViewAction)
+            self.actionLogView = QAction("&Log view", self)
+            self.actionLogView.setStatusTip("Show Log view")
+            self.actionLogView.setCheckable(True)
+            self.actionLogView.triggered.connect(self.showLogView)
+            viewMenu.addAction(self.actionLogView)
+
+        viewMenu.addSeparator()
+
+        # hide/display component in explorer splitter
+
+        # tree explorer
+        self.actionShowTreeExpl = QAction("Show/hide Tree Explorer", self)
+        self.actionShowTreeExpl.setStatusTip("Show/hide Tree Explorer")
+        self.actionShowTreeExpl.setCheckable(True)
+        self.actionShowTreeExpl.triggered.connect(self.showHideTree)
+        viewMenu.addAction(self.actionShowTreeExpl)
+        # list/table explorer
+        self.actionShowListExpl = QAction("Show/hide List Explorer", self)
+        self.actionShowListExpl.setStatusTip("Show/hide List Explorer")
+        self.actionShowListExpl.setCheckable(True)
+        self.actionShowListExpl.triggered.connect(self.showHideList)
+        viewMenu.addAction(self.actionShowListExpl)
+        # slideshow
+        self.actionShowSlideshow = QAction("Show/hide slideshow window", self)
+        self.actionShowSlideshow.setStatusTip("Show/hide slideshow window")
+        self.actionShowSlideshow.setCheckable(True)
+        self.actionShowSlideshow.triggered.connect(self.showHideSlide)
+        viewMenu.addAction(self.actionShowSlideshow)
+
+        # Slideshow Menu
+
+        # start slide show from first photo
+        self.actionStartSlideshow = QAction("Start slideshow (from first photo)", self)
+        self.actionStartSlideshow.setStatusTip("Start slideshow of current folder")
+        self.actionStartSlideshow.triggered.connect(self.onStartSlideshow)
+        slideshowMenu.addAction(self.actionStartSlideshow)
+
+        # pause slide show
+        self.actionPauseSlideshow = QAction("Pause slideshow", self)
+        self.actionPauseSlideshow.setStatusTip("Pause slideshow of current folder")
+        self.actionPauseSlideshow.triggered.connect(self.onPauseSlideshow)
+        slideshowMenu.addAction(self.actionPauseSlideshow)
+
+        # continue slide show
+        self.actionContinueSlideShow = QAction("Continue slideshow from current photo", self)
+        self.actionContinueSlideShow.setStatusTip("Continue slideshow of current folder")
+        self.actionContinueSlideShow.triggered.connect(self.onContinueSlideshow)
+        slideshowMenu.addAction(self.actionContinueSlideShow)
+
+        slideshowMenu.addSeparator()
+
+        # fullscreen toggle
+        self.actionSlideshowFullscreen = QAction("Fullscreen", self)
+        self.actionSlideshowFullscreen.setStatusTip("Full Screen Toggle")
+        self.actionSlideshowFullscreen.setShortcut("Ctrl+F")
+        self.actionSlideshowFullscreen.triggered.connect(self.toggleSlideshowFullScreen)
+        slideshowMenu.addAction(self.actionSlideshowFullscreen)
+
+        slideshowMenu.addSeparator()
+
+        # detach slideshow window from splitter
+        self.actionFloatSlideshow = QAction("Slideshow as float window", self)
+        self.actionFloatSlideshow.setStatusTip("Detach slideshow window from explorer splitter")
+        self.actionFloatSlideshow.triggered.connect(self.onDetachSlideshow)
+        slideshowMenu.addAction(self.actionFloatSlideshow)
+
+        # attach slideshow window in splitter
+        self.actionSlideshowSplitter = QAction("Slideshow in explorer", self)
+        self.actionSlideshowSplitter.setStatusTip("Attach slideshow window in explorer splitter")
+        self.actionSlideshowSplitter.triggered.connect(self.onAttachSlideshow)
+        slideshowMenu.addAction(self.actionSlideshowSplitter)
 
         # About
-        aboutAction = QAction("&About", self)
-        aboutAction.setStatusTip("About")
-        aboutAction.triggered.connect(self.about)
-        helpMenu.addAction(aboutAction)
+        action = QAction("&About", self)
+        action.setStatusTip("About")
+        action.triggered.connect(self.about)
+        helpMenu.addAction(action)
 
     def createActionBar(self):
         """initial action bar"""
@@ -447,21 +554,29 @@ class App(QMainWindow):
         self.toolbar.setMovable(False)
         self.toolbar.setFloatable(False)
 
-        self._navigateBackButton = QToolButton()
-        self._navigateBackButton.setIcon(QIcon("./src/ico/arrow-180.png"))
-        self._navigateBackButton.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
-        self._navigateBackButton.clicked.connect(self.navigateBack)
+        # navigation icons
+        button = QToolButton()
+        button.setIcon(QIcon("./src/ico/arrow-180.png"))
+        button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+        button.setStatusTip("Navigate Previous address")
+        button.clicked.connect(self.navigateBack)
+        self.toolbar.addWidget(button)
 
-        self._navigateForwardButton = QToolButton()
-        self._navigateForwardButton.setIcon(QIcon("./src/ico/arrow.png"))
-        self._navigateForwardButton.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
-        self._navigateForwardButton.clicked.connect(self.navigateForward)
+        button = QToolButton()
+        button.setIcon(QIcon("./src/ico/arrow.png"))
+        button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+        button.setStatusTip("Navigate Next address")
+        button.clicked.connect(self.navigateForward)
+        self.toolbar.addWidget(button)
 
-        self._navigateUpButton = QToolButton()
-        self._navigateUpButton.setIcon(QIcon("./src/ico/arrow-090.png"))
-        self._navigateUpButton.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
-        self._navigateUpButton.clicked.connect(self.navigateUp)
+        button = QToolButton()
+        button.setIcon(QIcon("./src/ico/arrow-090.png"))
+        button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+        button.setStatusTip("Navigate Up address")
+        button.clicked.connect(self.navigateUp)
+        self.toolbar.addWidget(button)
 
+        # splitter for address bar, search, combo search space
         splitter = QSplitter(Qt.Orientation.Horizontal)
 
         self.addressBar = QLineEdit()
@@ -469,6 +584,7 @@ class App(QMainWindow):
         self.addressBar.returnPressed.connect(self.navigateAddress)
         splitter.addWidget(self.addressBar)
 
+        # search section
         self.searchField = QLineEdit()
         self.searchField.setPlaceholderText("Search")
         self.searchField.returnPressed.connect(self.onSearch)
@@ -485,38 +601,160 @@ class App(QMainWindow):
         splitter.setStretchFactor(10, 1)
         splitter.setSizes([500, 200, 100])
 
-        self.toolbar.addWidget(self._navigateBackButton)
-        self.toolbar.addWidget(self._navigateForwardButton)
-        self.toolbar.addWidget(self._navigateUpButton)
         self.toolbar.addWidget(splitter)
+
+        # splitter icons
+        self.btTreeExplorer = QToolButton()
+        self.btTreeExplorer.setIcon(QIcon("./src/ico/pane1.png"))
+        self.btTreeExplorer.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+        self.btTreeExplorer.setStatusTip("Hide/Show main explorer folder Tree")
+        self.btTreeExplorer.setCheckable(True)
+        self.btTreeExplorer.clicked.connect(self.showHideTree)
+        self.toolbar.addWidget(self.btTreeExplorer)
+
+        self.btListExplorer = QToolButton()
+        self.btListExplorer.setIcon(QIcon("./src/ico/pane2.png"))
+        self.btListExplorer.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+        self.btListExplorer.setStatusTip("Hide/Show main explorer photos List")
+        self.btListExplorer.setCheckable(True)
+        self.btListExplorer.clicked.connect(self.showHideList)
+        self.toolbar.addWidget(self.btListExplorer)
+
+        self.btSlideshow = QToolButton()
+        self.btSlideshow.setIcon(QIcon("./src/ico/pane3.png"))
+        self.btSlideshow.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+        self.btSlideshow.setStatusTip("Hide/Show main explorer Slideshow")
+        self.btSlideshow.setCheckable(True)
+        self.btSlideshow.clicked.connect(self.showHideSlide)
+        self.toolbar.addWidget(self.btSlideshow)
+
+        # mainExplorer mode icons
+        if USE_COMBO_VIEW:
+            # mainExplorer view mode
+            self.comboView = QComboBox()
+            self.comboView.setEditable(False)
+            self.comboView.addItem(QIcon("./src/ico/windetails.png"), "List", "Details")
+            self.comboView.addItem(QIcon("./src/ico/winicons.png"), "Thumb", "Icons")
+            self.comboView.setStatusTip("Change view mode for Main Explorer")
+            self.setComboViewMode(self.currentExplorerView)
+            self.comboView.currentIndexChanged.connect(self.onChangeView)
+            self.toolbar.addWidget(self.comboView)
+        else:
+            self.btViewIcons = QToolButton()
+            self.btViewIcons.setIcon(QIcon("./src/ico/winicons.png"))
+            self.btViewIcons.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+            self.btViewIcons.setCheckable(True)
+            self.btViewIcons.clicked.connect(lambda setview, view="Icons": self.changeView(view))
+            self.btViewIcons.setStatusTip("Main Explorer Thumbnails mode")
+            self.toolbar.addWidget(self.btViewIcons)
+
+            self.btViewDetails = QToolButton()
+            self.btViewDetails.setIcon(QIcon("./src/ico/windetails.png"))
+            self.btViewDetails.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+            self.btViewDetails.setCheckable(True)
+            self.btViewDetails.clicked.connect(lambda setview, view="Details": self.changeView(view))
+            self.btViewDetails.setStatusTip("Main explorer Details mode")
+            self.toolbar.addWidget(self.btViewDetails)
+
         self.toolbar.setStyleSheet("QToolBar { border: 0px }")
+
+    def createSlideshowWidget(self, startTimer: bool):
+        """create slideshow window"""
+        if self.slideshow is not None:
+            self.slideshow.signal.previous.disconnect()
+            self.slideshow.signal.next.disconnect()
+        self.slideshow = SlideShow()
+        self.slideshow.setWindowTitle("Synology Photos Slideshow")
+        self.slideshow.setWindowIcon(QIcon("./src/ico/icon_photos.png"))
+        self.slideshow.setTimerEnabled(False)
+        self.slideshow.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.slideshow.customContextMenuRequested.connect(self.slideshowContextItemMenu)
+        self.slideshow.signal.previous.connect(self.onPrevSlide)
+        self.slideshow.signal.next.connect(self.onNextSlide)
+        if startTimer:
+            self.slideshow.setTimerEnabled(True)
+        self.slideshow.show()
+
+    def setComboViewMode(self, mode):
+        """set mode"""
+        for index in range(0, self.comboView.count()):
+            if self.comboView.itemData(index) == mode:
+                self.comboView.setCurrentIndex(index)
+
+    def onChangeView(self):
+        """change selection in comboView"""
+        view = self.comboView.currentData()
+        self.changeView(view)
 
     def changeView(self, view):
         """change view mode in mainExplorer : new PhotosIconView or PhotosDetailsView"""
+        if (
+            view == "Icons"
+            and isinstance(self.mainExplorer, PhotosIconView)
+            or view == "Details"
+            and isinstance(self.mainExplorer, PhotosDetailsView)
+        ):
+            self.updateToolbar()
+            return
+
+        # save current index and selection
+        needResel = self.mainExplorer is not None
+        if needResel:
+            sortColumn = self.mainExplorer.model().sortColumn()
+            sortOrder = self.mainExplorer.model().sortOrder()
+            index = self.mainExplorer.selectionModel().currentIndex()
+            # currentPath = ""
+            if not index.isValid():
+                needResel = False
+            else:
+                currentPath = self.mainExplorer.model().absoluteFilePath(index)
+                currentSelection = []
+                for index in self.mainExplorer.selectionModel().selection().indexes():
+                    if index.column() != 0:
+                        continue
+                    currentSelection.append(self.mainExplorer.model().absoluteFilePath(index))
+
         self.currentExplorerView = view
         if view == "Icons":
-            self.iconsViewAction.setChecked(True)
-            self.detailViewAction.setChecked(False)
+            self.actionIconsView.setChecked(True)
+            self.actionDetailsView.setChecked(False)
             self.mainExplorer = PhotosIconView(self.mainModel)
 
         elif view == "Details":
-            self.iconsViewAction.setChecked(False)
-            self.detailViewAction.setChecked(True)
+            self.actionDetailsView.setChecked(True)
             self.mainExplorer = PhotosDetailsView(self.mainModel)
+            self.mainExplorer.horizontalHeader().sectionClicked.connect(self.onSortColumn)
+
+        else:
+            assert False
 
         # Common settings
         self.mainExplorer.doubleClicked.connect(self.onDoubleClick)
-
         self.mainExplorer.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.mainExplorer.customContextMenuRequested.connect(self.contextItemMenu)
-
-        selectionModel = QItemSelectionModel(self.mainExplorer.model())
-        self.mainExplorer.setSelectionModel(selectionModel)
         self.mainExplorer.selectionModel().currentRowChanged.connect(self.onCurrentRowChanged)
         self.mainExplorer.selectionModel().selectionChanged.connect(self.onSelectionChanged)
         if hasattr(self, "explorerSplitter"):
             self.explorerSplitter.replaceWidget(1, self.mainExplorer)
             self.mainExplorer.setRootIndex(self.mainExplorer.model().setRootPath(self.currentDir))
+
+        # restore current index and selection
+        if needResel:
+            if sortColumn >= 0:
+                self.mainExplorer.model().sort(sortColumn, sortOrder)
+            index = self.mainExplorer.model().pathIndex(currentPath)
+            self.mainExplorer.setCurrentIndex(index)
+            self.mainExplorer.scrollTo(index, QAbstractItemView.ScrollHint.PositionAtCenter)
+            selection = QItemSelection()
+            for path in currentSelection:
+                index = self.mainExplorer.model().pathIndex(path)
+                selection.append(QItemSelectionRange(index))
+            self.mainExplorer.selectionModel().select(
+                selection, QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows
+            )
+
+        # update toolbar
+        self.updateToolbar()
 
     def closeEvent(self, event):
         """close app"""
@@ -526,6 +764,15 @@ class App(QMainWindow):
         # save various parameter
         self.settings.setValue("initialpath", self.currentDir)
         self.settings.setValue("viewtype", self.currentExplorerView)
+        self.settings.setValue("explorersplittersizes", self.explorerSplitter.saveState())
+        self.settings.setValue(
+            "explorersplitterhide",
+            [self.sideExplorer.isHidden(), self.mainExplorer.isHidden(), self.slideshow.isHidden()],
+        )
+        self.settings.setValue("slideshowpos", self.slideshow.saveGeometry())
+        self.settings.setValue("slideshowfloating", not isinstance(self.parentSlideshow, QSplitter))
+
+        self.slideshow.close()
 
         # stop control thread pool
         control_thread_pool.exit_loop()
@@ -554,17 +801,37 @@ class App(QMainWindow):
     def updateEditMenu(self):
         """update edit menu"""
         hasSelection = self.mainExplorer.selectionModel().hasSelection()
-        self.downloadToAction.setEnabled(hasSelection)
-        self.downloadAction.setEnabled(hasSelection)
-        self.tagsPersonalAction.setChecked(self.tab_widget.isTabExists(TAB_PERSONAL_TAGS))
-        self.tagsSharedAction.setChecked(self.tab_widget.isTabExists(TAB_SHARED_TAGS))
+        self.actionDownloadTo.setEnabled(hasSelection)
+        self.actionDownload.setEnabled(hasSelection)
+        self.actionTagsPersonal.setChecked(self.tab_widget.isTabExists(TAB_PERSONAL_TAGS))
+        self.actionTagsShared.setChecked(self.tab_widget.isTabExists(TAB_SHARED_TAGS))
+
+    def updateSlideshowMenu(self):
+        """update slideshow menu"""
+        name = "Exit Fullscreen" if self.slideshow.isFullScreen() else "Fullscreen"
+        self.actionSlideshowFullscreen.setText(name)
+        self.actionFloatSlideshow.setEnabled(isinstance(self.slideshow.parent(), QSplitter))
+        self.actionSlideshowSplitter.setEnabled(not isinstance(self.slideshow.parent(), QSplitter))
+        self.actionPauseSlideshow.setEnabled(self.slideshow.isTimerActive())
+        self.actionContinueSlideShow.setEnabled(not self.slideshow.isTimerActive())
+
+    def updateToolbar(self):
+        """update icons in toobar"""
+        self.btTreeExplorer.setChecked(not self.sideExplorer.isHidden())
+        self.btListExplorer.setChecked(not self.mainExplorer.isHidden())
+        self.btSlideshow.setChecked(self.slideshow.isVisible())
+        if USE_COMBO_VIEW:
+            self.setComboViewMode(self.currentExplorerView)
+        else:
+            self.btViewIcons.setChecked(isinstance(self.mainExplorer, PhotosIconView))
+            self.btViewDetails.setChecked(isinstance(self.mainExplorer, PhotosDetailsView))
 
     def contextItemMenu(self, position):
         """create context menu main explorer"""
         menu = QMenu()
         self.updateEditMenu()
-        menu.addAction(self.downloadToAction)
-        menu.addAction(self.downloadAction)
+        menu.addAction(self.actionDownloadTo)
+        menu.addAction(self.actionDownload)
         menu.exec(QCursor.pos())
 
     def sideContextItemMenu(self, position):
@@ -595,12 +862,133 @@ class App(QMainWindow):
             menu.addAction(action)
         menu.exec(QCursor.pos())
 
+    def slideshowContextItemMenu(self):
+        """context menu for slideshow"""
+        self.updateSlideshowMenu()
+        menu = QMenu()
+        menu.addAction(self.actionStartSlideshow)
+        menu.addAction(self.actionContinueSlideShow)
+        menu.addAction(self.actionPauseSlideshow)
+        menu.addSeparator()
+        menu.addAction(self.actionSlideshowFullscreen)
+        menu.addSeparator()
+        menu.addAction(self.actionFloatSlideshow)
+        menu.addAction(self.actionSlideshowSplitter)
+        # show context menu
+        menu.exec(QCursor.pos())
+
+    def toggleSlideshowFullScreen(self):
+        """slideshow widget in fullscreen
+
+        Fullscreen seems impossible when slideshow is in splitter !
+        Workaround : delete from splitter, recreate as floating window, and go fullscreen
+                     restore position on exit fullscreen
+        """
+        slideshowActive = self.slideshow.isTimerActive()
+        if self.slideshow.isFullScreen():
+            if isinstance(self.parentSlideshow, QSplitter):
+                self.slideshow.setTimerEnabled(False)
+                self.slideshow.close()
+                self.createSlideshowWidget(slideshowActive)
+                self.explorerSplitter.addWidget(self.slideshow)
+            else:
+                self.slideshow.showNormal()
+            self.modeFullscreen = False
+        else:
+            self.parentSlideshow = self.slideshow.parent()
+            if isinstance(self.parentSlideshow, QSplitter):
+                # remove from splitter
+                self.slideshow.setTimerEnabled(False)
+                widget = self.explorerSplitter.widget(WIDGET_SLIDESHOW)
+                widget.deleteLater()
+                # recreate, show current
+                self.createSlideshowWidget(slideshowActive)
+                self.setMainExplorerIndex("current")
+            self.slideshow.showFullScreen()
+            self.modeFullscreen = True
+        self.setMainExplorerIndex("current")
+
+    def setMainExplorerIndex(self, location):
+        """Set index : change
+
+        with location in ["first", "prev", "next", "current"]
+        """
+        curIndex = self.mainExplorer.currentIndex()
+        if not curIndex.isValid():
+            assert False
+        curNode = curIndex.model().nodePointer(curIndex)
+        log.info(f"setMainExplorerIndex({location}) node: {curNode.dataColumn(0)}")
+        if location == "first":
+            index = curIndex.model().index(0, 0, curIndex.parent())
+        elif location == "prev":
+            index = curIndex.model().index(
+                (curIndex.row() - 1) % curIndex.model().rowCount(curIndex.parent()), 0, curIndex.parent()
+            )
+        elif location == "next":
+            index = curIndex.model().index(
+                (curIndex.row() + 1) % curIndex.model().rowCount(curIndex.parent()), 0, curIndex.parent()
+            )
+        elif location == "current":
+            # need change row for generate signal
+            self.setMainExplorerIndex("first")
+            index = curIndex
+        else:
+            assert False
+        if not index.isValid():
+            assert False
+        curNode = index.model().nodePointer(index)
+        log.info(f"setMainExplorerIndex({location}) new node: {curNode.dataColumn(0)}")
+        self.mainExplorer.setCurrentIndex(index)
+
+    def onSortColumn(self, logicalIndex: int):
+        """sort column for explorer mode details"""
+        selected = self.mainExplorer.selectionModel().selectedIndexes()
+        if selected:
+            self.mainExplorer.scrollTo(selected[0], QAbstractItemView.ScrollHint.EnsureVisible)
+
+    def onDetachSlideshow(self):
+        """detach/attach slideshow from explorer splitter"""
+        self.createSlideshowWidget(self.slideshow.isTimerActive())
+        widget = self.explorerSplitter.widget(WIDGET_SLIDESHOW)
+        widget.deleteLater()
+        self.setMainExplorerIndex("current")
+
+    def onAttachSlideshow(self):
+        """detach/attach slideshow from explorer splitter"""
+        prevSlideshow = self.slideshow
+        self.createSlideshowWidget(self.slideshow.isTimerActive())
+        prevSlideshow.deleteLater()
+        self.explorerSplitter.addWidget(self.slideshow)
+        self.setMainExplorerIndex("current")
+
+    def onStartSlideshow(self):
+        """ "Start slideshow of current folder"""
+        self.setMainExplorerIndex("first")
+        self.slideshow.setTimerEnabled(True)
+
+    def onContinueSlideshow(self):
+        """ "Start slideshow of current folder"""
+        self.setMainExplorerIndex("current")
+        self.slideshow.setTimerEnabled(True)
+
+    def onPauseSlideshow(self):
+        """ "Start slideshow of current folder"""
+        self.slideshow.setTimerEnabled(False)
+
+    def onPrevSlide(self):
+        """click button prev in slideshow"""
+        self.setMainExplorerIndex("prev")
+
+    def onNextSlide(self):
+        """click button next in slideshow"""
+        log.info("onNextSlide")
+        self.setMainExplorerIndex("next")
+
     def tabTagContextItemMenu(self, position, widget, shared):
         """create context menu for tab Tag"""
         item: QTableWidgetItem = widget.itemAt(position)
         parent = widget.parent()
         parent = parent.parent()
-        print(widget.parent().windowTitle())
         if item.column() != 0:
             return
         tagName = item.text()
@@ -671,6 +1059,20 @@ class App(QMainWindow):
         """show dock log view"""
         self.log_dock.setHidden(not event)
 
+    def showHideTree(self, event):
+        """show/hide tree explorer"""
+        self.sideExplorer.setHidden(not event)
+
+    def showHideList(self, event):
+        """show/hide list explorer"""
+        self.mainExplorer.setHidden(not event)
+
+    def showHideSlide(self, event):
+        """show/hide slide show"""
+        self.slideshow.setHidden(not event)
+        if event and self.modeFullscreen:
+            self.slideshow.showFullScreen()
+
     def selectAll(self):
         """select all in main explorer"""
         self.mainExplorer.selectAll()
@@ -680,17 +1082,23 @@ class App(QMainWindow):
         self.mainExplorer.selectionModel().clearSelection()
 
     def navigate(self, index):
-        """navigate - index from mainExplorer"""
+        """navigate - index (always folder) from mainExplorer"""
         nodeIndex = index.model().nodeIndex(index)
         node = nodeIndex.internalPointer()
-        log.info(f"navigate inode {node.inode} {node.dataColumn(0)}")
-        self.currentDir = self.mainModel.absoluteFilePath(nodeIndex)
+        currentDir = self.mainModel.absoluteFilePath(nodeIndex)
+        if currentDir == self.currentDir:
+            return
+        self.currentDir = currentDir
+
+        log.info(f"navigate inode {node.inode} {node.dataColumn(0)} -> {self.currentDir}")
+        # navigate in folder => stop current slide show
+        self.slideshow.setTimerEnabled(False)
+
         self.mainModel.setRootPath(self.currentDir)
         # need to have real count
         self.mainModel.updateIfUnknownRowCount(nodeIndex)
-
         self.mainExplorer.setRootIndex(index)
-        # scroll to first item
+        # scroll to first item, but no set index
         child = node.child(0)
         if child:
             indexChild = self.mainModel.createIndex(child.row(), 0, child)
@@ -698,9 +1106,10 @@ class App(QMainWindow):
             self.mainExplorer.scrollTo(indexChild)
         self.setWindowTitle(f"Synology Photos Explorer - {self.currentDir}")
         self.addressBar.setText(self.currentDir)
-        # invalid widget thumbnail and json
+        # set json, invalidate thumbnail widget
         self.json_view.setModel(JsonModel(data=formatJson(node.rawData())))
         self.thumbnailWidget.setImage(QPixmap())
+        self.slideshow.setPhoto(QPixmap())
         # download child thumbnails
         self.download_childs_thumbnail(node)
         self.history.append(self.currentDir)
@@ -742,13 +1151,8 @@ class App(QMainWindow):
 
     def updateStatus(self, element: QModelIndex | str = None):
         """update status bar from path or QModelIndex"""
-        log.info("updateStatus")
-        if element is None:
-            index = self.mainExplorer.selectionModel().currentIndex()
-        else:
-            index = element if isinstance(element, QModelIndex) else self.mainModel.pathIndex(element)
-        if index.model() is None:
-            assert False
+        # log.info("updateStatus")
+        index = element if isinstance(element, QModelIndex) else self.mainModel.pathIndex(element)
         index = index.model().nodeIndex(index)
         self.mainModel.updateIfUnknownRowCount(index)
         status = ""
@@ -758,7 +1162,7 @@ class App(QMainWindow):
         elif node.node_type == NodeType.FILE:
             parent = node.parent()
             if parent.node_type == NodeType.FOLDER:
-                status = f"{parent.foldersNumber()} folders,  {parent.photosNumber()} photos"
+                status = f"{parent.foldersNumber()} folders,  {parent.photosNumber()} photos - {node.dataColumn(0)}: {node.dataColumn(1)}, {node.dataColumn(2)}"
         else:
             return
         selectedCount = len(
@@ -783,12 +1187,18 @@ class App(QMainWindow):
         log.info(f"change row side : {path}")
         self.navigate(self.mainExplorer.model().pathIndex(path))
 
-    def onSelectionChanged(self):
+    def onSelectionChanged(self, selected: QItemSelection, deselected: QItemSelection):
         """signal selection changed in mainExplorer"""
-        self.updateStatus()
+        log.info(f"onSelectionChanged selected:{selected.count()}, deselect:{deselected.count()}")
+        index = self.mainExplorer.selectionModel().currentIndex()
+        if not index.isValid():
+            log.info("invalid selection currentIndex %s", index.model())
+            return
+        self.updateStatus(self.mainExplorer.selectionModel().currentIndex())
 
     def onCurrentRowChanged(self, index: QModelIndex):
         """selection changed in main explorer"""
+        log.info("onCurrentRowChanged")
         if not index.isValid():
             return
         node: SynoNode = index.model().nodePointer(index)
@@ -823,7 +1233,9 @@ class App(QMainWindow):
                     image.convertToColorSpace(srgbColorSpace)
                 pixmap.convertFromImage(image)
                 self.thumbnailWidget.setImage(pixmap)
-            log.debug(f"cache stats: {cache.stats()}")
+            # show image in slideshow
+            self.slideshow.setPhoto(node)
+            log.debug(f"cache stats: {thumbcache.stats()}")
 
     def Search(self, section, searchText, shared):
         """Search photos"""
@@ -1032,7 +1444,7 @@ class App(QMainWindow):
                 False,
                 (),
             )
-            if key in cache:
+            if key in thumbcache:
                 # nothing to do
                 return
             future = download_thread_pool.submit(download_thumbnail, inode, syno_key, shared)
@@ -1072,7 +1484,7 @@ class App(QMainWindow):
             False,
             (),
         )
-        if key in cache:
+        if key in thumbcache:
             # nothing to do
             return
         future = download_thread_pool.submit(download_thumbnail, inode, syno_key, shared)
@@ -1133,11 +1545,4 @@ if __name__ == "__main__":
 
     app = QApplication(sys.argv)
     myApp = App()
-    # try:
-    #     app = QApplication(sys.argv)
-    #     myApp = App()
-    # except Exception as _e:
-    #     print(_e)
-    #     control_thread_pool.exit_loop()
-    #     download_thread_pool.shutdown(wait=True, cancel_futures=True)
     sys.exit(app.exec())

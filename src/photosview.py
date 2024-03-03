@@ -1,9 +1,7 @@
 """
-Explorer for Synology Photos
-
-Based on https://github.com/adesfontaines/pyqtexplorer
-
+Thumbnails and list views
 """
+
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QTableView,
@@ -32,16 +30,28 @@ class PhotosIconView(QListView):
 
     def __init__(self, model):
         super(PhotosIconView, self).__init__()
-        self.curModel = model
-        self.setModel(self.curModel)
+
+        model.useThumbnail(True)
+
+        if USE_SORT_MODEL:
+            self.proxyModel = SynoSortFilterProxyModel()
+            self.proxyModel.setSourceModel(model)
+            self.setModel(self.proxyModel)
+        else:
+            self.setModel(model)
+
+        self.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+
         self.setViewMode(QListView.ViewMode.IconMode)
         self.setWordWrap(True)
+
         grid_size = 250
         cell_size = 240
         thumb_size = QSize(cell_size, cell_size - int(QFontMetrics(self.font()).height() * 5))
+        model.setThumbnailSize(thumb_size)
 
         self.setGridSize(QSize(grid_size, grid_size))
-        self.curModel.setThumbnailSize(thumb_size)
         self.setUniformItemSizes(True)
         self.setResizeMode(QListView.ResizeMode.Adjust)
         self.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -52,11 +62,6 @@ class PhotosIconView(QListView):
         self.setDragEnabled(True)
         self.setAcceptDrops(False)
         self.setDragDropMode(QAbstractItemView.DragDropMode.DragOnly)
-
-        self.curModel.useThumbnail(True)
-
-        selectionModel = QItemSelectionModel(self.curModel)
-        self.setSelectionModel(selectionModel)
 
 
 class PhotosDetailsView(QTableView):
