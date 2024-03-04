@@ -17,12 +17,12 @@ from internalconfig import CACHE_PIXMAP
 
 
 @thumbcache.memoize(name=THUMB_CALLABLE_NAME, tag="thumb")
-def download_thumbnail(inode, cache_key, shared):
+def download_thumbnail(inode, cache_key, shared, passphrase):
     """get thumbnail using cache"""
     from photos_api import synofoto
 
     if CACHE_PIXMAP:
-        raw_image = synofoto.api.thumbnail_download(inode, "sm", cache_key, shared)
+        raw_image = synofoto.api.thumbnail_download(inode, "sm", cache_key, shared, passphrase)
         pixmap = QPixmap()
         image = QImage()
         image.loadFromData(raw_image)
@@ -37,11 +37,12 @@ def download_thumbnail(inode, cache_key, shared):
         buffer.open(QIODeviceBase.OpenModeFlag.WriteOnly)
         pixmap.save(buffer, "PNG")
         return array.data()
-    return synofoto.api.thumbnail_download(inode, "sm", cache_key, shared)
+    return synofoto.api.thumbnail_download(inode, "sm", cache_key, shared, passphrase)
+
 
 @photocache.memoize(name=THUMB_CALLABLE_NAME, tag="photo")
-def download_photo(inode, shared):
+def download_photo(inode, shared, passphrase):
     """get thumbnail using cache"""
     from photos_api import synofoto
 
-    return synofoto.api.photo_download(inode, shared)
+    return synofoto.api.photo_download(inode, shared, passphrase)

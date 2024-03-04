@@ -23,7 +23,7 @@ class PhotosFakeEmpty:
     def isFake(self) -> bool:
         return True
 
-    def count_albums(self) -> int:
+    def count_albums(self, **kwargs) -> int:
         return 0
 
     def count_folders(self, folder_id: int = 0, team: bool = False) -> int:

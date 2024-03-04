@@ -506,17 +506,17 @@ class App(QMainWindow):
         self.actionStartSlideshow.triggered.connect(self.onStartSlideshow)
         slideshowMenu.addAction(self.actionStartSlideshow)
 
+        # continue slide show
+        self.actionContinueSlideShow = QAction("Start slideshow from current photo", self)
+        self.actionContinueSlideShow.setStatusTip("Continue slideshow of current folder")
+        self.actionContinueSlideShow.triggered.connect(self.onContinueSlideshow)
+        slideshowMenu.addAction(self.actionContinueSlideShow)
+
         # pause slide show
         self.actionPauseSlideshow = QAction("Pause slideshow", self)
         self.actionPauseSlideshow.setStatusTip("Pause slideshow of current folder")
         self.actionPauseSlideshow.triggered.connect(self.onPauseSlideshow)
         slideshowMenu.addAction(self.actionPauseSlideshow)
-
-        # continue slide show
-        self.actionContinueSlideShow = QAction("Continue slideshow from current photo", self)
-        self.actionContinueSlideShow.setStatusTip("Continue slideshow of current folder")
-        self.actionContinueSlideShow.triggered.connect(self.onContinueSlideshow)
-        slideshowMenu.addAction(self.actionContinueSlideShow)
 
         slideshowMenu.addSeparator()
 
@@ -907,6 +907,7 @@ class App(QMainWindow):
             self.slideshow.showFullScreen()
             self.modeFullscreen = True
         self.setMainExplorerIndex("current")
+        self.updateToolbar()
 
     def setMainExplorerIndex(self, location):
         """Set index : change
@@ -914,6 +915,8 @@ class App(QMainWindow):
         with location in ["first", "prev", "next", "current"]
         """
         curIndex = self.mainExplorer.currentIndex()
+        if isinstance(curIndex.model(), SynoModel):
+            curIndex = self.mainExplorer.model().mapFromSource(curIndex)
         if not curIndex.isValid():
             assert False
         curNode = curIndex.model().nodePointer(curIndex)
@@ -963,11 +966,15 @@ class App(QMainWindow):
 
     def onStartSlideshow(self):
         """ "Start slideshow of current folder"""
+        self.slideshow.setHidden(False)
+        self.updateToolbar()
         self.setMainExplorerIndex("first")
         self.slideshow.setTimerEnabled(True)
 
     def onContinueSlideshow(self):
         """ "Start slideshow of current folder"""
+        self.slideshow.setHidden(False)
+        self.updateToolbar()
         self.setMainExplorerIndex("current")
         self.slideshow.setTimerEnabled(True)
 
@@ -1208,13 +1215,14 @@ class App(QMainWindow):
         # set thumbnail
         if node.node_type == NodeType.FOLDER:
             pass
-        elif node.node_type == NodeType.FILE:
+        elif node.node_type == NodeType.FILE and node._raw_data["type"] == "photo":
             shared = node.isShared()
             # use cached function :
             raw_image = download_thumbnail(
                 node.inode,
                 node.rawData()["additional"]["thumbnail"]["cache_key"],
                 shared,
+                node.passphrase(),
             )
             if not raw_image:
                 return
@@ -1236,6 +1244,10 @@ class App(QMainWindow):
             # show image in slideshow
             self.slideshow.setPhoto(node)
             log.debug(f"cache stats: {thumbcache.stats()}")
+        else:
+            pixmap = QPixmap()
+            self.thumbnailWidget.setImage(pixmap)
+            self.slideshow.setPhoto(pixmap)
 
     def Search(self, section, searchText, shared):
         """Search photos"""
@@ -1439,6 +1451,7 @@ class App(QMainWindow):
                     node.inode,
                     node.rawData()["additional"]["thumbnail"]["cache_key"],
                     shared,
+                    node.passphrase(),
                 ),
                 {},
                 False,
@@ -1447,7 +1460,7 @@ class App(QMainWindow):
             if key in thumbcache:
                 # nothing to do
                 return
-            future = download_thread_pool.submit(download_thumbnail, inode, syno_key, shared)
+            future = download_thread_pool.submit(download_thumbnail, inode, syno_key, shared, passphrase)
             # add to future pool
             control_thread_pool.add_future(future)
 
@@ -1479,6 +1492,7 @@ class App(QMainWindow):
                 node.inode,
                 node.rawData()["additional"]["thumbnail"]["cache_key"],
                 shared,
+                node.passphrase(),
             ),
             {},
             False,
@@ -1487,7 +1501,7 @@ class App(QMainWindow):
         if key in thumbcache:
             # nothing to do
             return
-        future = download_thread_pool.submit(download_thumbnail, inode, syno_key, shared)
+        future = download_thread_pool.submit(download_thumbnail, inode, syno_key, shared, node.passphrase())
         # add to future pool
         control_thread_pool.add_future(future)
 

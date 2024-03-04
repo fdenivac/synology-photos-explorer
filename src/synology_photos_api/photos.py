@@ -752,21 +752,32 @@ class Photos(base_api.BaseApi):
 
         return self._request_data("SYNO.Foto.Sharing.Misc", req_param)
 
-    def count_photos_in_album(self, album_id: int, **kwargs) -> int:
-        """Count photo in an album
+    def count_photos_in_album(self, album: int | str | dict, **kwargs) -> int:
+        """Count photos in an album
+
+        * album : album_id if int, passphrase if str, album description if dict
+
         ### Return
             photos count
         """
-        return self._count("SYNO.Foto.Browse.Item", album_id=album_id, **kwargs)
+        if isinstance(album, int):
+            req_param = dict({"album_id": album}, **kwargs)
+        elif isinstance(album, str):
+            req_param = dict({"passphrase": album}, **kwargs)
+        else:
+            if album["passphrase"]:
+                req_param = dict({"passphrase": album["passphrase"]}, **kwargs)
+            else:
+                req_param = dict({"album_id": album["id"]}, **kwargs)
+        return self._count("SYNO.Foto.Browse.Item", **req_param)
 
-    def photos_in_album(self, album_id: int = 0, **kwargs) -> dict[str, object]:
+    def photos_in_album(self, album: int = 0, **kwargs) -> dict[str, object]:
         """List photos in album
         ### Parameter
-        * album_id : album identifier
+        * album : album identifier: album_id if int, album passphrase if str, or album description
         ### kwargs parameters
+            passphrase (needed for photo in album "shared with me"),
             offset, limit,
-
-            id : photo identifiers list (use method `get`)
 
             sort_by : in ["filename", "filesize", "item_type", "takentime"],
 
@@ -774,10 +785,15 @@ class Photos(base_api.BaseApi):
         ### Return
             photo list
         """
-        if isinstance(album_id, str):
-            req_param = dict({"passphrase": album_id}, **kwargs)
+        if isinstance(album, str):
+            req_param = dict({"passphrase": album}, **kwargs)
+        elif isinstance(album, int):
+            req_param = dict({"album_id": album}, **kwargs)
         else:
-            req_param = dict({"album_id": album_id}, **kwargs)
+            if album["passphrase"]:
+                req_param = dict({"passphrase": album["passphrase"]}, **kwargs)
+            else:
+                req_param = dict({"album_id": album["id"]}, **kwargs)
         if "id" in req_param:
             req_param["method"] = "get"
         return self._method_list("SYNO.Foto.Browse.Item", http_method="post", **req_param)["data"]["list"]
@@ -872,6 +888,7 @@ class Photos(base_api.BaseApi):
             photo_ids : photo identifier, or list of folder identifier
             team : personal or shared space
         ### kwargs parameters
+            passphrase (needed for photo in album "shared with me"),
             offset, limit, sort_by, sort_direction, additional, ...
         ### Return
             photos list
@@ -887,21 +904,25 @@ class Photos(base_api.BaseApi):
         )
         return self._request_data(api_name, req_param)["data"]["list"]
 
-    def photo_download(self, photo_id: int, team: bool | None = None) -> bytes:
+    def photo_download(self, photo_id: int, team: bool | None = None, passphrase: str = None) -> bytes:
         """Download Photo
         ### Parameters
             photo_id : photo identifier
             team : personal or shared space
+            passphrase: needed for photo in album "shared with me"
+
         ### Return
             Raw image data
         """
         # determine if photo is in personal or shared space
-        if team is None:
+        if not passphrase and team is None:
             team = len(self.photos_from_ids(photo_id, True)) > 0
         api_name = "SYNO.FotoTeam.Download" if team else "SYNO.Foto.Download"
         if isinstance(photo_id, int):
             photo_id = [photo_id]
         req_param = {"method": "download", "unit_id": photo_id}
+        if passphrase:
+            req_param["passphrase"] = passphrase
         try:
             data = self._request_data(api_name, req_param, method="post", response_json=False)
         except PhotosError as _e:
@@ -914,6 +935,7 @@ class Photos(base_api.BaseApi):
         size: str,
         cache_key: str | None = None,
         team: bool | None = None,
+        passphrase: str = None,
     ) -> bytes:
         """Thumbnail Download
         ### Parameters
@@ -921,13 +943,13 @@ class Photos(base_api.BaseApi):
             * size: thumbnail size required in ["sm", "m", "xl"]
             * cache_key : None or thumbnail cache_key returned when `additional`=["thumbnail"] is requested in get_photo, photos_in_folder, ...
             * team : None, False for personal space, or True for shared space
+            * passphrase : None or album passphrase when album is "shared with me"
 
         When cache_key or team is None, a call to 'photos_from_ids' is done for determine space and get thumbnail structure.
         ### Return
             Raw image data
         """
-
-        if team is None or cache_key is None:
+        if (not passphrase and team is None) or cache_key is None:
             cache_key = None
             for team in [False, True]:
                 photos = self.photos_from_ids(photo_id, team, additional=["thumbnail"])
@@ -944,6 +966,8 @@ class Photos(base_api.BaseApi):
             "type": "unit",
             "cache_key": cache_key,
         }
+        if passphrase:
+            req_param["passphrase"] = passphrase
         try:
             data = self._request_data(api_name, req_param, method="post", response_json=False)
         except PhotosError as _e:

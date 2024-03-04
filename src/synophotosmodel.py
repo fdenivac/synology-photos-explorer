@@ -236,13 +236,16 @@ class SynoNode(QStandardItem):
         if self.space == SpaceType.ALBUM:
             if self.node_type == NodeType.SPACE:
                 log.warning("updateRowCount count_albums()")
-                self.nb_folders = synofoto.api.count_albums()
+                self.nb_folders = synofoto.api.count_albums(category="normal_share_with_me")
                 self._children = [None] * (self.nb_folders)
             elif self.node_type == NodeType.FOLDER:
                 self.nb_folders = 0
                 if not self.dirs_only:
-                    log.warning(f"updateRowCount count_photos_in_album({self.inode})")
-                    self.nb_photos = synofoto.api.count_photos_in_album(self.inode)
+                    if not "item_count" in self._raw_data:
+                        log.warning(f"updateRowCount count_photos_in_album({self.inode})")
+                        self.nb_photos = synofoto.api.count_photos_in_album(self.inode)
+                    else:
+                        self.nb_photos = self._raw_data["item_count"]
                     self._children = [None] * (self.nb_photos)
 
         elif self.space == SpaceType.SEARCH:
@@ -349,7 +352,7 @@ class SynoNode(QStandardItem):
         elif self.space == SpaceType.ALBUM:
             if self.node_type == NodeType.SPACE:
                 log.info("list_albums()")
-                elements = synofoto.api.list_albums(sort_by="album_name")
+                elements = synofoto.api.list_albums(sort_by="album_name", category="normal_share_with_me")
             else:
                 if not self.dirs_only:
                     log.info(f"photos_in_album({self.inode})")
@@ -357,11 +360,16 @@ class SynoNode(QStandardItem):
                     left = self.nb_photos
                     while left:
                         partial_elements = synofoto.api.photos_in_album(
-                            self.inode,
+                            (
+                                self.inode
+                                if not "passphrase" in self._raw_data or not self._raw_data["passphrase"]
+                                else self._raw_data["passphrase"]
+                            ),
                             offset=self.nb_photos - left,
                             limit=min(PHOTOS_CHUNK, left),
                             additional=self._model.additional,
                             sort_by="takentime",
+                            # passphrase=self._raw_data["passphrase"],
                         )
                         left -= len(partial_elements)
                         if left:
@@ -477,6 +485,12 @@ class SynoNode(QStandardItem):
         else:
             shared = self.space == SpaceType.SHARED
         return shared
+
+    def passphrase(self):
+        """return passphrase for node in album shared (whith me)"""
+        if self.space != SpaceType.ALBUM:
+            return None
+        return self.parent()._raw_data["passphrase"]
 
     def photosNumber(self) -> int:
         """return photos number for node"""
@@ -639,10 +653,11 @@ class SynoModel(QAbstractItemModel):
                             Qt.AspectRatioMode.KeepAspectRatio,
                         )
                     shared = node.isShared()
+                    passphrase = node.passphrase()
                     syno_key = node._raw_data["additional"]["thumbnail"]["cache_key"]
                     if CACHE_PIXMAP:
                         image = QPixmap()
-                        image.loadFromData(download_thumbnail(node.inode, syno_key, shared))
+                        image.loadFromData(download_thumbnail(node.inode, syno_key, shared, passphrase))
                         return image.scaled(
                             self.thumbnail_size.width(),
                             self.thumbnail_size.height(),
@@ -650,7 +665,7 @@ class SynoModel(QAbstractItemModel):
                         )
                     else:
                         log.debug(f"model need thumb {node.inode}")
-                        raw_image = download_thumbnail(node.inode, syno_key, shared)
+                        raw_image = download_thumbnail(node.inode, syno_key, shared, passphrase)
                         if not raw_image:
                             return QVariant()
                         pixmap = QPixmap()

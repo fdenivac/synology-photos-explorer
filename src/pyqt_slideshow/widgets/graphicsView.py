@@ -32,7 +32,7 @@ class SingleImageGraphicsView(QGraphicsView):
             node = image
             pixmap = QPixmap()
             image = QImage()
-            raw_image = download_photo(node.inode, node.isShared())
+            raw_image = download_photo(node.inode, node.isShared(), node.passphrase())
             image.loadFromData(raw_image)
             colorspace = image.colorSpace()
             if not colorspace.description().startswith("sRGB"):

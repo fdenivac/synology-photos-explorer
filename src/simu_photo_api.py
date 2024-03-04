@@ -4,7 +4,6 @@
     Used for development
 """
 
-
 fakeDatas = {
     (0, True): {
         "json": {"id": 0, "name": "Shared Root"},
@@ -88,5 +87,6 @@ class PhotosFake:
         size: str,
         cache_key: str | None = None,
         team: bool | None = None,
+        passphrase: str = None,
     ) -> bytes:
         return []
