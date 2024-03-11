@@ -103,6 +103,10 @@ class SlideShow(QWidget):
         self.__interval = milliseconds
         self.__timer.setInterval(milliseconds)
 
+    def getInterval(self) -> int:
+        """get timer value"""
+        return self.__interval
+
     def setPhoto(self, photo):
         """set photo
 

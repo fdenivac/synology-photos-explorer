@@ -286,7 +286,7 @@ class App(QMainWindow):
         # photos view/slideshow
         self.slideshow = None
         self.createSlideshowWidget(False)
-        self.parentSlideshow = None
+        self.slideshow.setInterval(self.settings.value("slideshowdelay", 5000))
         self.modeFullscreen = False
 
         # Main explorer
@@ -363,13 +363,15 @@ class App(QMainWindow):
             self.sideExplorer.model().createSearch(section, searchText, shared)
         self.settings.endGroup()
 
-        # set initial path
+        # set initial path and navigate
         self.currentDir = ""
         currentDir = self.settings.value("initialpath", INITIAL_PATH)
         self.sideExplorer.model().setRootPath(currentDir)
         self.sideExplorer.expandAbsolutePath(currentDir)
         self.navigate(self.mainExplorer.model().setRootPath(currentDir))
-        # self.setMainExplorerIndex("first")
+        self.setMainExplorerIndex("first")
+
+        self.updateToolbar()
 
         log.info("END InitUI")
 
@@ -398,6 +400,7 @@ class App(QMainWindow):
         action = QAction("&Quit", self)
         action.triggered.connect(self.quitApp)
         action.setShortcut("Ctrl+Q")
+        action.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
         fileMenu.addAction(action)
 
         # Edit
@@ -457,6 +460,7 @@ class App(QMainWindow):
         self.actionJsonView = QAction("&JSON view", self)
         self.actionJsonView.setStatusTip("Show JSON view")
         self.actionJsonView.setShortcut("Ctrl+J")
+        self.actionJsonView.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
         self.actionJsonView.setCheckable(True)
         self.actionJsonView.triggered.connect(self.showJsonView)
         viewMenu.addAction(self.actionJsonView)
@@ -464,6 +468,7 @@ class App(QMainWindow):
         self.actionThumbView = QAction("&Thumbnail view", self)
         self.actionThumbView.setStatusTip("Show Thumbnail view")
         self.actionThumbView.setShortcut("Ctrl+T")
+        self.actionThumbView.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
         self.actionThumbView.setCheckable(True)
         self.actionThumbView.triggered.connect(self.showThumbView)
         viewMenu.addAction(self.actionThumbView)
@@ -518,12 +523,25 @@ class App(QMainWindow):
         self.actionPauseSlideshow.triggered.connect(self.onPauseSlideshow)
         slideshowMenu.addAction(self.actionPauseSlideshow)
 
+        # slide show delay between photos
+        subMenu = QMenu("Slideshow speed", self)
+        subMenu.setStatusTip("Adjust slideshow speed")
+        for delay in [3, 5, 10, 15]:
+            action = QAction(f"{delay} seconds", self)
+            action.setData(delay * 1000)
+            action.setCheckable(True)
+            action.triggered.connect(lambda setspeed, speed=delay: self.onSetSlideshowSpeed(speed))
+            subMenu.addAction(action)
+        slideshowMenu.addMenu(subMenu)
+        self.menuSlideshowSpeed = subMenu
+
         slideshowMenu.addSeparator()
 
         # fullscreen toggle
         self.actionSlideshowFullscreen = QAction("Fullscreen", self)
         self.actionSlideshowFullscreen.setStatusTip("Full Screen Toggle")
         self.actionSlideshowFullscreen.setShortcut("Ctrl+F")
+        self.actionSlideshowFullscreen.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
         self.actionSlideshowFullscreen.triggered.connect(self.toggleSlideshowFullScreen)
         slideshowMenu.addAction(self.actionSlideshowFullscreen)
 
@@ -770,7 +788,7 @@ class App(QMainWindow):
             [self.sideExplorer.isHidden(), self.mainExplorer.isHidden(), self.slideshow.isHidden()],
         )
         self.settings.setValue("slideshowpos", self.slideshow.saveGeometry())
-        self.settings.setValue("slideshowfloating", not isinstance(self.parentSlideshow, QSplitter))
+        self.settings.setValue("slideshowfloating", not isinstance(self.slideshow.parent(), QSplitter))
 
         self.slideshow.close()
 
@@ -813,13 +831,18 @@ class App(QMainWindow):
         self.actionFloatSlideshow.setEnabled(isinstance(self.slideshow.parent(), QSplitter))
         self.actionSlideshowSplitter.setEnabled(not isinstance(self.slideshow.parent(), QSplitter))
         self.actionPauseSlideshow.setEnabled(self.slideshow.isTimerActive())
-        self.actionContinueSlideShow.setEnabled(not self.slideshow.isTimerActive())
+        delay = self.slideshow.getInterval()
+        for action in self.menuSlideshowSpeed.actions():
+            action.setChecked(action.data() == delay)
 
     def updateToolbar(self):
         """update icons in toobar"""
         self.btTreeExplorer.setChecked(not self.sideExplorer.isHidden())
         self.btListExplorer.setChecked(not self.mainExplorer.isHidden())
-        self.btSlideshow.setChecked(self.slideshow.isVisible())
+        if isinstance(self.slideshow.parent(), QSplitter):
+            self.btSlideshow.setChecked(self.slideshow.parent().widget(WIDGET_SLIDESHOW) is not None)
+        else:
+            self.btSlideshow.setChecked(self.slideshow.isVisible())
         if USE_COMBO_VIEW:
             self.setComboViewMode(self.currentExplorerView)
         else:
@@ -830,6 +853,9 @@ class App(QMainWindow):
         """create context menu main explorer"""
         menu = QMenu()
         self.updateEditMenu()
+        menu.addAction(self.actionStartSlideshow)
+        menu.addAction(self.actionContinueSlideShow)
+        menu.addSeparator()
         menu.addAction(self.actionDownloadTo)
         menu.addAction(self.actionDownload)
         menu.exec(QCursor.pos())
@@ -886,7 +912,7 @@ class App(QMainWindow):
         """
         slideshowActive = self.slideshow.isTimerActive()
         if self.slideshow.isFullScreen():
-            if isinstance(self.parentSlideshow, QSplitter):
+            if isinstance(self.slideshow.parent(), QSplitter):
                 self.slideshow.setTimerEnabled(False)
                 self.slideshow.close()
                 self.createSlideshowWidget(slideshowActive)
@@ -895,8 +921,7 @@ class App(QMainWindow):
                 self.slideshow.showNormal()
             self.modeFullscreen = False
         else:
-            self.parentSlideshow = self.slideshow.parent()
-            if isinstance(self.parentSlideshow, QSplitter):
+            if isinstance(self.slideshow.parent(), QSplitter):
                 # remove from splitter
                 self.slideshow.setTimerEnabled(False)
                 widget = self.explorerSplitter.widget(WIDGET_SLIDESHOW)
@@ -918,7 +943,9 @@ class App(QMainWindow):
         if isinstance(curIndex.model(), SynoModel):
             curIndex = self.mainExplorer.model().mapFromSource(curIndex)
         if not curIndex.isValid():
-            assert False
+            # possible when login error
+            log.error("Invalid index")
+            return
         curNode = curIndex.model().nodePointer(curIndex)
         log.info(f"setMainExplorerIndex({location}) node: {curNode.dataColumn(0)}")
         if location == "first":
@@ -990,6 +1017,12 @@ class App(QMainWindow):
         """click button next in slideshow"""
         log.info("onNextSlide")
         self.setMainExplorerIndex("next")
+
+    def onSetSlideshowSpeed(self, speed):
+        """set slideshow speed"""
+        value = speed * 1000
+        self.slideshow.setInterval(value)
+        self.settings.setValue("slideshowdelay", value)
 
     def tabTagContextItemMenu(self, position, widget, shared):
         """create context menu for tab Tag"""
@@ -1460,7 +1493,7 @@ class App(QMainWindow):
             if key in thumbcache:
                 # nothing to do
                 return
-            future = download_thread_pool.submit(download_thumbnail, inode, syno_key, shared, passphrase)
+            future = download_thread_pool.submit(download_thumbnail, inode, syno_key, shared, node.passphrase())
             # add to future pool
             control_thread_pool.add_future(future)
 

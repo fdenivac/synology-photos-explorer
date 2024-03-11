@@ -44,7 +44,7 @@ class ControlDownloadPool:
     def __init__(self):
         self._lock = Lock()
         self._event_quit = Event()
-        self.futures: [Future] = []
+        self.futures: list[Future] = []
 
     def add_future(self, future: Future):
         self._lock.acquire()

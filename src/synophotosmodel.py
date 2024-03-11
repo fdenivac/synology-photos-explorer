@@ -241,7 +241,7 @@ class SynoNode(QStandardItem):
             elif self.node_type == NodeType.FOLDER:
                 self.nb_folders = 0
                 if not self.dirs_only:
-                    if not "item_count" in self._raw_data:
+                    if "item_count" not in self._raw_data:
                         log.warning(f"updateRowCount count_photos_in_album({self.inode})")
                         self.nb_photos = synofoto.api.count_photos_in_album(self.inode)
                     else:
@@ -362,7 +362,7 @@ class SynoNode(QStandardItem):
                         partial_elements = synofoto.api.photos_in_album(
                             (
                                 self.inode
-                                if not "passphrase" in self._raw_data or not self._raw_data["passphrase"]
+                                if "passphrase" not in self._raw_data or not self._raw_data["passphrase"]
                                 else self._raw_data["passphrase"]
                             ),
                             offset=self.nb_photos - left,
